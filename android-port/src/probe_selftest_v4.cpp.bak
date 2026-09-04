@@ -1,0 +1,301 @@
+// probe_selftest.cpp v4 — game-parity end-to-end test of the probe chain.
+// Isolated process; the game process is never touched.
+//
+// Findings so far (v1-v3): Houdini delivers integer args correctly to compiled
+// functions but mangles them at direct-bl entry of naked functions (d0/NZCV
+// survive). The game path enters the veneer via an INDIRECT branch (br x17)
+// from the patched entry, so this build tests that exact path:
+//
+//   plain     : compiled control (expect 325)
+//   dummyA    : naked via direct bl (expect 325; known broken -> documents it)
+//   indirect  : naked DummyA entered via br from compiled code (expect 325)
+//   install   : install probe on compiled PlainFunc, then call it via bl.
+//               Full chain: patched entry -> br x17 -> naked veneer -> count ->
+//               restore -> trampoline (replayed prologue) -> original body.
+//               Expect result 325 AND g_calls==1.
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <sys/mman.h>
+#include <unistd.h>
+
+extern "C" {
+std::atomic<std::uint64_t> g_calls{0};
+void* g_probe_trampoline = nullptr;
+}
+
+#define LOG(fmt, ...) \
+    do { std::fprintf(stderr, "[selftest] " fmt "\n", ##__VA_ARGS__); } while (0)
+
+constexpr std::uint8_t kDispatchSignature[16] = {
+    0xf6, 0x0f, 0x1d, 0xf8, 0xf5, 0x53, 0x01, 0xa9,
+    0xf3, 0x7b, 0x02, 0xa9, 0x08, 0x24, 0x40, 0xa9,
+};
+
+extern "C" __attribute__((noinline)) void ProbeImpl(void*, const void*) {
+    g_calls.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" __attribute__((naked)) void ProbeEntry() {
+    __asm__ volatile(
+        "sub sp, sp, #0x310\n"
+        "stp x0, x1, [sp]\n"
+        "stp x2, x3, [sp, #0x10]\n"
+        "stp x4, x5, [sp, #0x20]\n"
+        "stp x6, x7, [sp, #0x30]\n"
+        "stp x8, x9, [sp, #0x40]\n"
+        "stp x10, x11, [sp, #0x50]\n"
+        "stp x12, x13, [sp, #0x60]\n"
+        "stp x14, x15, [sp, #0x70]\n"
+        "stp x16, x17, [sp, #0x80]\n"
+        "stp x18, x19, [sp, #0x90]\n"
+        "stp x20, x21, [sp, #0xa0]\n"
+        "stp x22, x23, [sp, #0xb0]\n"
+        "stp x24, x25, [sp, #0xc0]\n"
+        "stp x26, x27, [sp, #0xd0]\n"
+        "stp x28, x29, [sp, #0xe0]\n"
+        "str x30, [sp, #0xf0]\n"
+        "stp q0, q1, [sp, #0x100]\n"
+        "stp q2, q3, [sp, #0x120]\n"
+        "stp q4, q5, [sp, #0x140]\n"
+        "stp q6, q7, [sp, #0x160]\n"
+        "stp q8, q9, [sp, #0x180]\n"
+        "stp q10, q11, [sp, #0x1a0]\n"
+        "stp q12, q13, [sp, #0x1c0]\n"
+        "stp q14, q15, [sp, #0x1e0]\n"
+        "stp q16, q17, [sp, #0x200]\n"
+        "stp q18, q19, [sp, #0x220]\n"
+        "stp q20, q21, [sp, #0x240]\n"
+        "stp q22, q23, [sp, #0x260]\n"
+        "stp q24, q25, [sp, #0x280]\n"
+        "stp q26, q27, [sp, #0x2a0]\n"
+        "stp q28, q29, [sp, #0x2c0]\n"
+        "stp q30, q31, [sp, #0x2e0]\n"
+        "mrs x16, nzcv\n"
+        "str x16, [sp, #0x300]\n"
+        "ldp x0, x1, [sp]\n"
+        "bl ProbeImpl\n"
+        "ldp x0, x1, [sp]\n"
+        "ldp x2, x3, [sp, #0x10]\n"
+        "ldp x4, x5, [sp, #0x20]\n"
+        "ldp x6, x7, [sp, #0x30]\n"
+        "ldp x8, x9, [sp, #0x40]\n"
+        "ldp x10, x11, [sp, #0x50]\n"
+        "ldp x12, x13, [sp, #0x60]\n"
+        "ldp x14, x15, [sp, #0x70]\n"
+        "ldp x16, x17, [sp, #0x80]\n"
+        "ldp x18, x19, [sp, #0x90]\n"
+        "ldp x20, x21, [sp, #0xa0]\n"
+        "ldp x22, x23, [sp, #0xb0]\n"
+        "ldp x24, x25, [sp, #0xc0]\n"
+        "ldp x26, x27, [sp, #0xd0]\n"
+        "ldp x28, x29, [sp, #0xe0]\n"
+        "ldr x30, [sp, #0xf0]\n"
+        "ldp q0, q1, [sp, #0x100]\n"
+        "ldp q2, q3, [sp, #0x120]\n"
+        "ldp q4, q5, [sp, #0x140]\n"
+        "ldp q6, q7, [sp, #0x160]\n"
+        "ldp q8, q9, [sp, #0x180]\n"
+        "ldp q10, q11, [sp, #0x1a0]\n"
+        "ldp q12, q13, [sp, #0x1c0]\n"
+        "ldp q14, q15, [sp, #0x1e0]\n"
+        "ldp q16, q17, [sp, #0x200]\n"
+        "ldp q18, q19, [sp, #0x220]\n"
+        "ldp q20, q21, [sp, #0x240]\n"
+        "ldp q22, q23, [sp, #0x260]\n"
+        "ldp q24, q25, [sp, #0x280]\n"
+        "ldp q26, q27, [sp, #0x2a0]\n"
+        "ldp q28, q29, [sp, #0x2c0]\n"
+        "ldp q30, q31, [sp, #0x2e0]\n"
+        "ldr x16, [sp, #0x300]\n"
+        "msr nzcv, x16\n"
+        "add sp, sp, #0x310\n"
+        "adrp x16, :got:g_probe_trampoline\n"
+        "ldr x16, [x16, #:got_lo12:g_probe_trampoline]\n"
+        "ldr x16, [x16]\n"
+        "br x16\n");
+}
+
+void WriteAbsoluteJump(std::uint8_t* destination, std::uintptr_t target) {
+    constexpr std::uint32_t load_x17_literal = 0x58000051;
+    constexpr std::uint32_t branch_x17 = 0xD61F0220;
+    std::memcpy(destination, &load_x17_literal, sizeof(load_x17_literal));
+    std::memcpy(destination + 4, &branch_x17, sizeof(branch_x17));
+    std::memcpy(destination + 8, &target, sizeof(target));
+}
+
+int MappingProtection(void* address) {
+    FILE* maps = std::fopen("/proc/self/maps", "re");
+    if (maps == nullptr) return 0;
+    char line[2048]{};
+    const auto target = reinterpret_cast<std::uintptr_t>(address);
+    int protection = 0;
+    while (std::fgets(line, sizeof(line), maps) != nullptr) {
+        unsigned long long start = 0, end = 0;
+        char perms[5]{};
+        if (std::sscanf(line, "%llx-%llx %4s", &start, &end, perms) == 3 &&
+            target >= start && target < end) {
+            if (perms[0] == 'r') protection |= PROT_READ;
+            if (perms[1] == 'w') protection |= PROT_WRITE;
+            if (perms[2] == 'x') protection |= PROT_EXEC;
+            break;
+        }
+    }
+    std::fclose(maps);
+    return protection;
+}
+
+bool InstallProbe(std::uint8_t* target, bool require_signature) {
+    if (require_signature && std::memcmp(target, kDispatchSignature, 16) != 0) {
+        LOG("signature mismatch; abort");
+        return false;
+    }
+    std::uint8_t original_bytes[16]{};
+    std::memcpy(original_bytes, target, sizeof(original_bytes));
+
+    const long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) return false;
+    void* page = reinterpret_cast<void*>(
+        reinterpret_cast<std::uintptr_t>(target) &
+        ~static_cast<std::uintptr_t>(page_size - 1));
+    const int original_protection = MappingProtection(page);
+    if (original_protection == 0) {
+        LOG("target page protection unknown; abort");
+        return false;
+    }
+    LOG("target=%p page=%p original_prot=0x%x", target, page, original_protection);
+
+    auto* trampoline = static_cast<std::uint8_t*>(
+        mmap(nullptr, 32, PROT_READ | PROT_WRITE,
+             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    if (trampoline == MAP_FAILED) {
+        LOG("trampoline mmap failed");
+        return false;
+    }
+    std::memcpy(trampoline, target, 16);
+    WriteAbsoluteJump(trampoline + 16, reinterpret_cast<std::uintptr_t>(target + 16));
+    __builtin___clear_cache(reinterpret_cast<char*>(trampoline),
+                            reinterpret_cast<char*>(trampoline + 32));
+    if (mprotect(trampoline, 32, PROT_READ) != 0) {
+        LOG("trampoline mprotect(R) failed; keeping RW (errno=%d)", errno);
+    }
+
+    if (mprotect(page, static_cast<size_t>(page_size),
+                 original_protection | PROT_WRITE) != 0) {
+        munmap(trampoline, 32);
+        LOG("target mprotect(+W) FAILED errno=%d; abort", errno);
+        return false;
+    }
+
+    g_probe_trampoline = trampoline;
+    WriteAbsoluteJump(target, reinterpret_cast<std::uintptr_t>(&ProbeEntry));
+    __builtin___clear_cache(reinterpret_cast<char*>(target),
+                            reinterpret_cast<char*>(target + 16));
+
+    if (mprotect(page, static_cast<size_t>(page_size), original_protection) != 0) {
+        LOG("target mprotect restore FAILED errno=%d; rolling back", errno);
+        mprotect(page, static_cast<size_t>(page_size),
+                 original_protection | PROT_WRITE);
+        std::memcpy(target, original_bytes, sizeof(original_bytes));
+        __builtin___clear_cache(reinterpret_cast<char*>(target),
+                                reinterpret_cast<char*>(target + 16));
+        mprotect(page, static_cast<size_t>(page_size), original_protection);
+        munmap(trampoline, 32);
+        g_probe_trampoline = nullptr;
+        return false;
+    }
+    LOG("target mprotect restore ok; probe installed");
+    return true;
+}
+
+// Compiled control.
+extern "C" __attribute__((noinline)) std::uint64_t PlainFunc(
+    const std::uint64_t* pair, std::uint64_t frame, std::uint64_t a,
+    std::uint64_t b, double c) {
+    return pair[0] + pair[1] + frame + a + b + static_cast<std::uint64_t>(c);
+}
+
+// Naked with game-style prologue (bytes identical to game 0x38b7930).
+extern "C" __attribute__((naked)) std::uint64_t DummyA(
+    const std::uint64_t* pair, std::uint64_t frame, std::uint64_t a,
+    std::uint64_t b, double c) {
+    __asm__ volatile(
+        "str x22, [sp, #-0x30]!\n"
+        "stp x21, x20, [sp, #0x10]\n"
+        "stp x19, x30, [sp, #0x20]\n"
+        "ldp x8, x9, [x0]\n"
+        "mov x20, x1\n"
+        "add x8, x8, x9\n"
+        "add x8, x8, x2\n"
+        "add x8, x8, x3\n"
+        "fmov x9, d0\n"
+        "add x8, x8, x9\n"
+        "add x8, x8, x20\n"
+        "mov x0, x8\n"
+        "ldp x19, x30, [sp, #0x20]\n"
+        "ldp x21, x20, [sp, #0x10]\n"
+        "ldr x22, [sp], #0x30\n"
+        "ret\n");
+}
+
+// Enter a naked function via indirect branch (like the patched game entry):
+// x0=fn, x1=pair, x2=frame, x3=a, x4=b, d0=c -> shift args, br to fn.
+extern "C" __attribute__((naked)) std::uint64_t CallIndirect(
+    std::uint64_t (*fn)(const std::uint64_t*, std::uint64_t, std::uint64_t,
+                        std::uint64_t, double),
+    const std::uint64_t* pair, std::uint64_t frame, std::uint64_t a,
+    std::uint64_t b, double c) {
+    __asm__ volatile(
+        "mov x16, x0\n"
+        "mov x0, x1\n"
+        "mov x1, x2\n"
+        "mov x2, x3\n"
+        "mov x3, x4\n"
+        "br x16\n");
+}
+
+static constexpr std::uint64_t kExpect = 325;
+
+int main(int argc, char** argv) {
+    const char* mode = argc > 1 ? argv[1] : "plain";
+    std::uint64_t pair[2] = {100, 200};
+    LOG("mode=%s pid=%d", mode, getpid());
+
+    if (std::strcmp(mode, "plain") == 0) {
+        const std::uint64_t r = PlainFunc(pair, 16, 2, 3, 4.0);
+        LOG("plain result=%llu (expect %llu)", static_cast<unsigned long long>(r),
+            static_cast<unsigned long long>(kExpect));
+        return 0;
+    }
+
+    if (std::strcmp(mode, "dummyA") == 0) {
+        const std::uint64_t r = DummyA(pair, 16, 2, 3, 4.0);
+        LOG("dummyA result=%llu (expect %llu)", static_cast<unsigned long long>(r),
+            static_cast<unsigned long long>(kExpect));
+        return 0;
+    }
+
+    if (std::strcmp(mode, "indirect") == 0) {
+        const std::uint64_t r = CallIndirect(&DummyA, pair, 16, 2, 3, 4.0);
+        LOG("indirect result=%llu (expect %llu)", static_cast<unsigned long long>(r),
+            static_cast<unsigned long long>(kExpect));
+        return 0;
+    }
+
+    if (std::strcmp(mode, "install") == 0) {
+        if (!InstallProbe(reinterpret_cast<std::uint8_t*>(&PlainFunc), false)) {
+            LOG("INSTALL FAILED");
+            return 1;
+        }
+        const std::uint64_t r = PlainFunc(pair, 16, 2, 3, 4.0);
+        LOG("installed result=%llu calls=%llu (expect %llu 1)",
+            static_cast<unsigned long long>(r),
+            static_cast<unsigned long long>(g_calls.load()),
+            static_cast<unsigned long long>(kExpect));
+        return 0;
+    }
+
+    LOG("unknown mode %s", mode);
+    return 2;
+}

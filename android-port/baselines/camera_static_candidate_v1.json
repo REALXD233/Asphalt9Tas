@@ -1,0 +1,119 @@
+{
+  "schema": "a9tas-camera-static-candidate-v1",
+  "name": "android-active-camera-static-route",
+  "status": "offline-static-candidate",
+  "binary": {
+    "path": "../apk-analysis/lib/arm64-v8a/libAsphalt9.so",
+    "sha256": "671522d4614abcce5c4da16ff8a177423fa67f3eace7b6f0652e9754403008f0",
+    "image_base": "0x0",
+    "architecture": "aarch64"
+  },
+  "regions": [
+    {
+      "role": "raceview_constructor_vptr_identity",
+      "rva": "0x3a73464",
+      "size": "0x40",
+      "sha256": "6e797f673100d0eabffacdb228eb670cfac00624a66b9d6d0ee501629914c56f"
+    },
+    {
+      "role": "raceview_get_blended_camera",
+      "rva": "0x3a74170",
+      "size": "0x70",
+      "sha256": "ce72744b6a2a8f5e00bd20ede8a932c1cbb150bc8155a9dcafb3e699b56cb435"
+    },
+    {
+      "role": "replay_user_camera_update_wrapper_layout_witness_only",
+      "rva": "0x37b8c88",
+      "size": "0x80",
+      "sha256": "aae546387d94e2f3f6f10479b9605008221373e200d9a826b4049997d384100f"
+    },
+    {
+      "role": "canonical_camera_state_commit_layout_witness",
+      "rva": "0x37b92b0",
+      "size": "0xb4",
+      "sha256": "753120afe2c2a4734496a33e09a86ef69645051db55d19a046c6be14a48394e3"
+    },
+    {
+      "role": "replay_user_camera_constructor_identity_witness_only",
+      "rva": "0x37b8808",
+      "size": "0x198",
+      "sha256": "db3f39e44d951d59e7c87d547b90ca8e627a0ab0fac5060a4c088de9f7341ee0"
+    }
+  ],
+  "static_route": {
+    "race_view_primary_vptr_rva": "0x8174f40",
+    "race_view_secondary_vptr_rva": "0x8175108",
+    "race_view_secondary_vptr_offset": "0x4a0",
+    "race_view_camera_manager_offset": "0x4b8",
+    "camera_manager_blended_camera_offset": "0x100",
+    "canonical_state_offsets_from_camera_controller": {
+      "fov_candidate": "0xf0",
+      "aspect_candidate": "0xf4",
+      "position_xyz": "0xf8",
+      "rotation_xyzw": "0x104"
+    },
+    "position_getter_vtable_slot": "0x70",
+    "rotation_getter_vtable_slot": "0x78"
+  },
+  "instruction_witnesses": [
+    {
+      "rva": "0x3a74178",
+      "word_le": "0xf9425c09",
+      "meaning": "load camera manager from RaceView plus 0x4b8"
+    },
+    {
+      "rva": "0x3a74184",
+      "word_le": "0xf9408128",
+      "meaning": "load blended camera from manager plus 0x100"
+    },
+    {
+      "rva": "0x37b92c0",
+      "word_le": "0xf9403908",
+      "meaning": "load position getter from vtable slot 0x70"
+    },
+    {
+      "rva": "0x37b92d8",
+      "word_le": "0xf9403d09",
+      "meaning": "load rotation getter from vtable slot 0x78"
+    },
+    {
+      "rva": "0x37b92e8",
+      "word_le": "0xb940f269",
+      "meaning": "read first canonical scalar at controller plus 0xf0"
+    },
+    {
+      "rva": "0x37b92f8",
+      "word_le": "0xbd40f661",
+      "meaning": "read second canonical scalar at controller plus 0xf4"
+    },
+    {
+      "rva": "0x37b9314",
+      "word_le": "0x9103e260",
+      "meaning": "address canonical position at controller plus 0xf8"
+    },
+    {
+      "rva": "0x37b9304",
+      "word_le": "0x91041260",
+      "meaning": "address canonical rotation at controller plus 0x104"
+    }
+  ],
+  "interpretation": {
+    "proven_offline": [
+      "RaceView exposes a blended-camera pointer through the 0x4b8 then 0x100 chain",
+      "the Android camera commit witness stores two scalars, position xyz, and rotation xyzw as canonical per-frame state",
+      "the original camera update must run before a replay override"
+    ],
+    "not_yet_proven": [
+      "the live gameplay blended-camera object uses the same controller-relative state offsets",
+      "the exact gameplay CameraUpdate entry and post-original write boundary",
+      "FOV and aspect semantic ordering of the two scalar candidates"
+    ],
+    "retired_false_candidate": "0x37b8d08 is ReplayUserCameraController-specific and must not be used as the gameplay camera hook"
+  },
+  "live_policy": {
+    "next_gate": "read-only active blended-camera identity and state-layout validation",
+    "writes_allowed": false,
+    "vehicle_derived_camera_allowed": false,
+    "gameplay_camera_hook_allowed": false
+  }
+}

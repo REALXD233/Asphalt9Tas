@@ -1,0 +1,203 @@
+// probe_selftest.cpp v5 — test Design B: COMPILED probe (Houdini delivers
+// integer args correctly to compiled functions) calling the copied-prologue
+// trampoline via a normal function-pointer call. Isolated process; the game
+// process is never touched.
+//
+// Findings so far: Houdini mangles integer register delivery at naked-function
+// entries (any prologue shape, bl or br entry; d0/NZCV survive); compiled
+// functions receive args correctly. Design A (naked veneer) is therefore not
+// usable. Design B patches the target entry to jump directly into a compiled
+// probe; the probe counts and then calls the trampoline (replayed 16-byte
+// prologue + absolute jump to target+16) as a normal function pointer.
+//
+//   plain   : compiled control (expect 325)
+//   probeC  : Design B on PlainFunc — call PlainFunc, expect 325 and calls==1
+//   dummyA  : reference: naked entry via bl (expect broken under Houdini)
+// All install steps are logged to stderr so the crash point is visible.
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <sys/mman.h>
+#include <unistd.h>
+
+extern "C" {
+std::atomic<std::uint64_t> g_calls{0};
+void* g_probe_trampoline = nullptr;
+}
+
+#define LOG(fmt, ...) \
+    do { std::fprintf(stderr, "[selftest] " fmt "\n", ##__VA_ARGS__); } while (0)
+
+// Compiled probe (Design B): receives (ctx, frame) per AAPCS64, counts, then
+// calls the trampoline like any function. The trampoline replays the original
+// prologue and jumps into the original body; the original epilogue returns
+// into this function, which then returns to the original caller.
+extern "C" __attribute__((noinline)) void ProbeFunc(void* context, const void* frame) {
+    g_calls.fetch_add(1, std::memory_order_relaxed);
+    using Fn = void (*)(void*, const void*);
+    Fn trampoline = reinterpret_cast<Fn>(g_probe_trampoline);
+    trampoline(context, frame);
+}
+
+void WriteAbsoluteJump(std::uint8_t* destination, std::uintptr_t target) {
+    constexpr std::uint32_t load_x17_literal = 0x58000051;
+    constexpr std::uint32_t branch_x17 = 0xD61F0220;
+    std::memcpy(destination, &load_x17_literal, sizeof(load_x17_literal));
+    std::memcpy(destination + 4, &branch_x17, sizeof(branch_x17));
+    std::memcpy(destination + 8, &target, sizeof(target));
+}
+
+int MappingProtection(void* address) {
+    FILE* maps = std::fopen("/proc/self/maps", "re");
+    if (maps == nullptr) return 0;
+    char line[2048]{};
+    const auto target = reinterpret_cast<std::uintptr_t>(address);
+    int protection = 0;
+    while (std::fgets(line, sizeof(line), maps) != nullptr) {
+        unsigned long long start = 0, end = 0;
+        char perms[5]{};
+        if (std::sscanf(line, "%llx-%llx %4s", &start, &end, perms) == 3 &&
+            target >= start && target < end) {
+            if (perms[0] == 'r') protection |= PROT_READ;
+            if (perms[1] == 'w') protection |= PROT_WRITE;
+            if (perms[2] == 'x') protection |= PROT_EXEC;
+            break;
+        }
+    }
+    std::fclose(maps);
+    return protection;
+}
+
+bool InstallProbe(std::uint8_t* target, void (*probe)(void*, const void*)) {
+    std::uint8_t original_bytes[16]{};
+    std::memcpy(original_bytes, target, sizeof(original_bytes));
+
+    const long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) return false;
+    void* page = reinterpret_cast<void*>(
+        reinterpret_cast<std::uintptr_t>(target) &
+        ~static_cast<std::uintptr_t>(page_size - 1));
+    const int original_protection = MappingProtection(page);
+    if (original_protection == 0) {
+        LOG("target page protection unknown; abort");
+        return false;
+    }
+    LOG("target=%p page=%p original_prot=0x%x", target, page, original_protection);
+
+    auto* trampoline = static_cast<std::uint8_t*>(
+        mmap(nullptr, 32, PROT_READ | PROT_WRITE,
+             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    if (trampoline == MAP_FAILED) {
+        LOG("trampoline mmap failed");
+        return false;
+    }
+    LOG("trampoline mmap ok addr=%p", trampoline);
+    std::memcpy(trampoline, target, 16);
+    WriteAbsoluteJump(trampoline + 16, reinterpret_cast<std::uintptr_t>(target + 16));
+    __builtin___clear_cache(reinterpret_cast<char*>(trampoline),
+                            reinterpret_cast<char*>(trampoline + 32));
+    LOG("trampoline written; clear_cache ok");
+    if (mprotect(trampoline, 32, PROT_READ) != 0) {
+        LOG("trampoline mprotect(R) failed; keeping RW (errno=%d)", errno);
+    } else {
+        LOG("trampoline mprotect(R) ok");
+    }
+
+    if (mprotect(page, static_cast<size_t>(page_size),
+                 original_protection | PROT_WRITE) != 0) {
+        munmap(trampoline, 32);
+        LOG("target mprotect(+W) FAILED errno=%d; abort", errno);
+        return false;
+    }
+    LOG("target mprotect(+W) ok");
+
+    g_probe_trampoline = trampoline;
+    WriteAbsoluteJump(target, reinterpret_cast<std::uintptr_t>(probe));
+    __builtin___clear_cache(reinterpret_cast<char*>(target),
+                            reinterpret_cast<char*>(target + 16));
+    LOG("target patched; clear_cache ok");
+
+    if (mprotect(page, static_cast<size_t>(page_size), original_protection) != 0) {
+        LOG("target mprotect restore FAILED errno=%d; rolling back", errno);
+        mprotect(page, static_cast<size_t>(page_size),
+                 original_protection | PROT_WRITE);
+        std::memcpy(target, original_bytes, sizeof(original_bytes));
+        __builtin___clear_cache(reinterpret_cast<char*>(target),
+                                reinterpret_cast<char*>(target + 16));
+        mprotect(page, static_cast<size_t>(page_size), original_protection);
+        munmap(trampoline, 32);
+        g_probe_trampoline = nullptr;
+        return false;
+    }
+    LOG("target mprotect restore ok; probe installed");
+    return true;
+}
+
+// Compiled control — also the Design B install target.
+extern "C" __attribute__((noinline)) std::uint64_t PlainFunc(
+    const std::uint64_t* pair, std::uint64_t frame, std::uint64_t a,
+    std::uint64_t b, double c) {
+    return pair[0] + pair[1] + frame + a + b + static_cast<std::uint64_t>(c);
+}
+
+// Reference: naked entry via direct bl (known broken under Houdini).
+extern "C" __attribute__((naked)) std::uint64_t DummyA(
+    const std::uint64_t* pair, std::uint64_t frame, std::uint64_t a,
+    std::uint64_t b, double c) {
+    __asm__ volatile(
+        "str x22, [sp, #-0x30]!\n"
+        "stp x21, x20, [sp, #0x10]\n"
+        "stp x19, x30, [sp, #0x20]\n"
+        "ldp x8, x9, [x0]\n"
+        "mov x20, x1\n"
+        "add x8, x8, x9\n"
+        "add x8, x8, x2\n"
+        "add x8, x8, x3\n"
+        "fmov x9, d0\n"
+        "add x8, x8, x9\n"
+        "add x8, x8, x20\n"
+        "mov x0, x8\n"
+        "ldp x19, x30, [sp, #0x20]\n"
+        "ldp x21, x20, [sp, #0x10]\n"
+        "ldr x22, [sp], #0x30\n"
+        "ret\n");
+}
+
+static constexpr std::uint64_t kExpect = 325;
+
+int main(int argc, char** argv) {
+    const char* mode = argc > 1 ? argv[1] : "plain";
+    std::uint64_t pair[2] = {100, 200};
+    LOG("mode=%s pid=%d", mode, getpid());
+
+    if (std::strcmp(mode, "plain") == 0) {
+        const std::uint64_t r = PlainFunc(pair, 16, 2, 3, 4.0);
+        LOG("plain result=%llu (expect %llu)", static_cast<unsigned long long>(r),
+            static_cast<unsigned long long>(kExpect));
+        return 0;
+    }
+
+    if (std::strcmp(mode, "dummyA") == 0) {
+        const std::uint64_t r = DummyA(pair, 16, 2, 3, 4.0);
+        LOG("dummyA result=%llu (expect %llu)", static_cast<unsigned long long>(r),
+            static_cast<unsigned long long>(kExpect));
+        return 0;
+    }
+
+    if (std::strcmp(mode, "probeC") == 0) {
+        if (!InstallProbe(reinterpret_cast<std::uint8_t*>(&PlainFunc), &ProbeFunc)) {
+            LOG("INSTALL FAILED");
+            return 1;
+        }
+        const std::uint64_t r = PlainFunc(pair, 16, 2, 3, 4.0);
+        LOG("probeC result=%llu calls=%llu (expect %llu 1)",
+            static_cast<unsigned long long>(r),
+            static_cast<unsigned long long>(g_calls.load()),
+            static_cast<unsigned long long>(kExpect));
+        return 0;
+    }
+
+    LOG("unknown mode %s", mode);
+    return 2;
+}

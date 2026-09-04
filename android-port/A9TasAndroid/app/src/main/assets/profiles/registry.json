@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "profiles": [
+    {
+      "id": "huawei-439fd7f94ef570d9",
+      "label": "A9 6.0.3a build 79bc14aa · verified",
+      "native_sha256": "439fd7f94ef570d94d7673eedc1f5c0ff39ed0a0536f12b68e0d589c3eec6c71",
+      "build_id": "79bc14aab49e7cda6e926c07c7932effe8092c86",
+      "profile_asset": "profiles/439fd7f94ef570d9.a9profile.bin",
+      "profile_sha256": "b8493df162079a627c5e2dcb7c91c293b15262a78e7bf99bcffbbbabcca4b731",
+      "practice_proof": {
+        "vptr0_rva": "0x8168760",
+        "vptr588_rva": "0x8168940",
+        "vptr6c0_rva": "0x8168ab8",
+        "vptr718_rva": "0x8168b48",
+        "vptr748_rva": "0x8168c10"
+      }
+    },
+    {
+      "id": "national-671522d4614abcce",
+      "label": "A9 reference build e5dd7ef2 · verified baseline",
+      "native_sha256": "671522d4614abcce5c4da16ff8a177423fa67f3eace7b6f0652e9754403008f0",
+      "build_id": "e5dd7ef24f52dff0e0040dc3b1320f267a3c3b3b",
+      "profile_asset": "profiles/671522d4614abcce.a9profile.bin",
+      "profile_sha256": "192e76f447758252a834fd075102cf8efbf04ba7a220ab10f2fafab064169f3a",
+      "practice_proof": {
+        "vptr0_rva": "0x812fad8",
+        "vptr588_rva": "0x812fcb8",
+        "vptr6c0_rva": "0x812fe30",
+        "vptr718_rva": "0x812fec0",
+        "vptr748_rva": "0x812ff88"
+      }
+    }
+  ]
+}

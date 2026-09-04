@@ -1,0 +1,821 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface"
+    android:clipToPadding="false"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingTop="28dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="40dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="-0.02"
+            android:text="A9 TAS"
+            android:textColor="@color/text_primary"
+            android:textSize="34sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="仅限国服独立练习 · 录制、回放与分段续录"
+            android:textColor="@color/text_secondary"
+            android:textSize="15sp" />
+
+        <LinearLayout
+            style="@style/A9Tas.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="当前状态"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/statusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:lineSpacingExtra="3dp"
+                android:text="尚未扫描游戏"
+                android:textColor="@color/text_primary"
+                android:textSize="17sp" />
+
+            <LinearLayout
+                android:id="@+id/progressContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <ProgressBar
+                    android:id="@+id/operationProgress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:max="1000"
+                    android:progressTint="@color/accent"
+                    android:progressBackgroundTint="@color/surface_elevated" />
+
+                <TextView
+                    android:id="@+id/operationProgressText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/cancelButton"
+                    style="@style/A9Tas.Button.Danger"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="取消并恢复游戏" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/setupToggleButton"
+            style="@style/A9Tas.Button.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="更换游戏或管理许可"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/licenseCard"
+            style="@style/A9Tas.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="研究许可"
+                android:textColor="@color/text_primary"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/licenseStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="未激活"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/deviceCodeText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textColor="@color/text_tertiary"
+                android:textIsSelectable="true"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/licenseInput"
+                style="@style/A9Tas.Field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:hint="粘贴 A9L1 卡密"
+                android:importantForAutofill="no"
+                android:inputType="textPassword"
+                android:maxLength="2048"
+                android:minLines="2" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/activateLicenseButton"
+                    style="@style/A9Tas.Button.Primary"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="激活" />
+
+                <Space android:layout_width="8dp" android:layout_height="1dp" />
+
+                <Button
+                    android:id="@+id/clearLicenseButton"
+                    style="@style/A9Tas.Button.Secondary"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="移除许可" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/prepareCard"
+            style="@style/A9Tas.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="一次准备"
+                android:textColor="@color/text_primary"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="选择兼容的游戏进程并准备一次。之后可在同一进程中反复录制和回放。"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/scanButton"
+                style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="授权 Root 并扫描游戏" />
+
+            <Spinner
+                android:id="@+id/processSpinner"
+                style="@style/A9Tas.Field"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="10dp"
+                android:popupBackground="@color/surface_elevated" />
+
+            <TextView
+                android:id="@+id/profileText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="BuildProfile：不可用"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/profileOptionsToggleButton"
+                style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="兼容性与 Profile 高级设置" />
+
+            <LinearLayout
+                android:id="@+id/profileOptionsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+        <Button
+            android:id="@+id/importProfileButton"
+                style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+            android:text="导入 ARM64 BuildProfile" />
+
+        <Button
+            android:id="@+id/exportProfileButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="导出当前 ARM64 BuildProfile" />
+
+        <Button
+                android:id="@+id/generateProfileButton"
+                style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:enabled="false"
+                android:text="为所选未知 ARM64 核心自动定位" />
+
+            <CheckBox
+                android:id="@+id/experimentalBypassCheck"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:buttonTint="@color/accent"
+                android:minHeight="48dp"
+                android:text="实验模式：忽略构建与运行环境身份验证"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <Spinner
+                android:id="@+id/experimentalProfileSpinner"
+                style="@style/A9Tas.Field"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="6dp"
+                android:enabled="false"
+                android:popupBackground="@color/surface_elevated" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="仅对已映射 libAsphalt9.so 的进程开放。选错 BuildProfile 可能导致游戏闪退；该模式不会被记为已验证兼容。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/startServiceButton"
+                style="@style/A9Tas.Button.Primary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:enabled="false"
+                android:text="准备所选游戏" />
+        </LinearLayout>
+
+        <LinearLayout
+            style="@style/A9Tas.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="快捷操作"
+                android:textColor="@color/text_primary"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="启动一次连续刷圈后，直接驾驶即可。Retry 会自动丢弃未保留片段并从 Tick 0 录制下一局。"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/overlayButton"
+                style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="开启游戏悬浮控制" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:text="悬浮球不读取游戏内存；展开后可开始连续刷圈、暂停封存或结束任务，拖动后会自动贴边。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/recordButton"
+                style="@style/A9Tas.Button.Primary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:enabled="false"
+                android:text="一键开始连续刷圈" />
+
+            <Button
+                android:id="@+id/quickOptionsToggleButton"
+                style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="刷圈与回放设置" />
+
+            <LinearLayout
+                android:id="@+id/quickOptionsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+            <CheckBox
+                android:id="@+id/brushSessionCheck"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:buttonTint="@color/accent"
+                android:checked="true"
+                android:minHeight="48dp"
+                android:text="刷圈会话：完赛后保留运行时"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="首次仍需让工具命中比赛生命周期；同一进程内后续 Retry 不需要再切回工具或暂停在倒计时 3。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <CheckBox
+                android:id="@+id/autoRetryRecordCheck"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:buttonTint="@color/accent"
+                android:checked="true"
+                android:minHeight="48dp"
+                android:text="重开后自动准备下一局"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="开启后，直接 Retry 不保存本局；工具会在新局生命周期出现时自动执行下方的下一局策略。需要保留时先暂停。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <CheckBox
+                android:id="@+id/continuousLoadSelectedCheck"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:buttonTint="@color/accent"
+                android:minHeight="48dp"
+                android:text="下一局先加载所选录像到目标 Tick"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="关闭：从 Tick 0 直接录制。开启：自动回放录像库当前选择的前缀，暂停并武装续录，再按下方设置由你手动或延时自动继续。等待 Retry/断点暂停时可修改，下一局生效。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <CheckBox
+                android:id="@+id/recordPauseInterruptCheck"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:buttonTint="@color/accent"
+                android:checked="true"
+                android:minHeight="48dp"
+                android:text="比赛中暂停后直接保存当前片段"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="录制已产生 Tick 后，暂停约 2.5 秒会在完整 Tick 边界直接加入录像库。随后可在录像库把回放长度改成 500、600 等任意有效值。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="回放速度"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+
+                <Spinner
+                    android:id="@+id/replaySpeedSpinner"
+                    style="@style/A9Tas.Field"
+                    android:layout_width="120dp"
+                    android:layout_height="52dp"
+                    android:popupBackground="@color/surface_elevated" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/replayButton"
+                style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:enabled="false"
+                android:text="一键回放所选录像" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/recordingInfoToggleButton"
+            style="@style/A9Tas.Button.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="下一次录制的信息（可选）" />
+
+        <LinearLayout
+            android:id="@+id/recordingInfoCard"
+            style="@style/A9Tas.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="录制信息" android:textColor="@color/text_primary"
+                android:textSize="18sp" android:textStyle="bold" />
+
+            <EditText android:id="@+id/titleInput" style="@style/A9Tas.Field"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:hint="录像标题（留空自动生成）"
+                android:inputType="textCapSentences" android:maxLength="120" android:singleLine="true" />
+
+            <EditText android:id="@+id/mapInput" style="@style/A9Tas.Field"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:hint="地图"
+                android:inputType="textCapWords" android:maxLength="120" android:singleLine="true" />
+
+            <EditText android:id="@+id/carInput" style="@style/A9Tas.Field"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:hint="车辆"
+                android:inputType="textCapWords" android:maxLength="120" android:singleLine="true" />
+
+            <Spinner android:id="@+id/controlModeSpinner" style="@style/A9Tas.Field"
+                android:layout_width="match_parent" android:layout_height="52dp"
+                android:layout_marginTop="8dp" android:popupBackground="@color/surface_elevated" />
+        </LinearLayout>
+
+        <LinearLayout
+            style="@style/A9Tas.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical">
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="录像库" android:textColor="@color/text_primary"
+                android:textSize="20sp" android:textStyle="bold" />
+
+            <EditText
+                android:id="@+id/recordingFilterInput"
+                style="@style/A9Tas.Field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:hint="筛选标题、地图、车辆或版本 ID"
+                android:inputType="text"
+                android:maxLength="120"
+                android:singleLine="true" />
+
+            <Spinner
+                android:id="@+id/recordingSortSpinner"
+                style="@style/A9Tas.Field"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="8dp"
+                android:popupBackground="@color/surface_elevated" />
+
+            <TextView
+                android:id="@+id/libraryCountText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="0 个录像"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <Spinner android:id="@+id/recordingSpinner" style="@style/A9Tas.Field"
+                android:layout_width="match_parent" android:layout_height="52dp"
+                android:layout_marginTop="8dp" android:popupBackground="@color/surface_elevated" />
+
+            <TextView android:id="@+id/recordingDetailText"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="10dp" android:text="尚无录像"
+                android:textColor="@color/text_secondary" android:textSize="13sp" />
+
+            <EditText android:id="@+id/targetTickInput" style="@style/A9Tas.Field"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:hint="回放长度（Tick 数）"
+                android:inputType="number" android:maxLength="7" android:singleLine="true" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:text="输入 500 会回放前 500 Tick。修改此数字后可反复回放；原录像不会改变。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <CheckBox
+                android:id="@+id/pauseAtTargetCheck"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:buttonTint="@color/accent"
+                android:minHeight="48dp"
+                android:text="到目标 Tick 后自动暂停比赛"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="以录像的权威 Tick 为准；暂停后保留当前画面，原始 Hook 仍会完整恢复。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="分支编辑"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:text="续录会保留所选录像前 N Tick，再从该边界接管驾驶；裁剪始终创建副本，原录像不会被覆盖。"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+
+            <CheckBox
+                android:id="@+id/branchAutoHandoffCheck"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:buttonTint="@color/accent"
+                android:checked="false"
+                android:minHeight="48dp"
+                android:text="武装完成后自动继续游戏"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="工具会在目标前提前请求游戏暂停，并以实际最后一个完整 Tick 作为续录断点；暂停请求后的尾部自动舍弃，不再冻结游戏进程。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/branchDelayInput"
+                style="@style/A9Tas.Field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:enabled="false"
+                android:hint="武装成功后的暂停缓冲秒数（0–600）"
+                android:inputType="number"
+                android:maxLength="3"
+                android:singleLine="true" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:text="默认关闭：目标 Tick 自动暂停 → 立即武装后段录制 → 等你在游戏中手动继续。开启后则保持暂停指定时间并自动继续。暂停等待不会写入分支录像。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/branchRecordButton"
+                style="@style/A9Tas.Button.Primary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:enabled="false"
+                android:text="从所选长度续录新分支" />
+
+            <Button
+                android:id="@+id/trimButton"
+                style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:enabled="false"
+                android:text="按所选长度裁剪副本" />
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:orientation="horizontal">
+                <Button android:id="@+id/renameButton" style="@style/A9Tas.Button.Secondary"
+                    android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:enabled="false" android:text="重命名" />
+                <Space android:layout_width="8dp" android:layout_height="1dp" />
+                <Button android:id="@+id/deleteButton" style="@style/A9Tas.Button.Danger"
+                    android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:enabled="false" android:text="删除" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/bulkDeleteButton"
+                    style="@style/A9Tas.Button.Danger"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:enabled="false"
+                    android:text="筛选结果移到回收站" />
+
+                <Space android:layout_width="8dp" android:layout_height="1dp" />
+
+                <Button
+                    android:id="@+id/undoDeleteButton"
+                    style="@style/A9Tas.Button.Secondary"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:enabled="false"
+                    android:text="撤销批量删除" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:text="批量删除先移入 APK 私有回收站，可撤销最近一次操作。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:orientation="horizontal">
+                <Button android:id="@+id/importButton" style="@style/A9Tas.Button.Secondary"
+                    android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:text="导入" />
+                <Space android:layout_width="8dp" android:layout_height="1dp" />
+                <Button android:id="@+id/exportButton" style="@style/A9Tas.Button.Secondary"
+                    android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:enabled="false" android:text="导出" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/advancedToggleButton"
+            style="@style/A9Tas.Button.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="恢复、诊断与高级操作" />
+
+        <LinearLayout
+            android:id="@+id/advancedCard"
+            style="@style/A9Tas.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="恢复与高级操作" android:textColor="@color/text_primary"
+                android:textSize="18sp" android:textStyle="bold" />
+
+            <Button android:id="@+id/restoreButton" style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:text="恢复原始游戏状态" />
+
+            <Button android:id="@+id/installSessionButton" style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:enabled="false" android:text="仅安装比赛会话（诊断）" />
+
+            <Button android:id="@+id/packageButton" style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:enabled="false" android:text="重新封装最近的原始录像" />
+
+            <Button
+                android:id="@+id/compatibilityButton"
+                style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="运行只读兼容性预检" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:text="只检查 Root、ABI、运行后端、游戏构建与生命周期；不安装 Hook，不写游戏状态。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/diagnosticButton"
+                style="@style/A9Tas.Button.Primary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="一键生成并分享诊断包（无需 ADB）" />
+
+            <Button
+                android:id="@+id/diagnosticSaveButton"
+                style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="仅保存诊断包 ZIP" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:text="出现错误后立即分享；包含操作 ID、状态时间线和 Root 回执，不包含卡密、账号、录像、截图、游戏内存或其他应用日志。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <Button android:id="@+id/stopServiceButton" style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="恢复并停止服务" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:lineSpacingExtra="2dp"
+            android:text="稳定模式只接受精确身份匹配；实验模式仅绕过身份门，不会绕过 PID 生命周期与 libAsphalt9.so 映射约束。"
+            android:textColor="@color/text_tertiary"
+            android:textSize="12sp" />
+    </LinearLayout>
+</ScrollView>

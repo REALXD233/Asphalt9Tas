@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.a9tas.android">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Recognized by LDPlayer's built-in Superuser manager; harmless on stock Android. -->
+    <uses-permission android:name="android.permission.ACCESS_SUPERUSER" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="A9 TAS"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.A9Tas">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:resizeableActivity="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".TasForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintains an explicitly authorized local TAS session and restores its fixed hooks." />
+        </service>
+
+        <provider
+            android:name=".DiagnosticShareProvider"
+            android:authorities="${applicationId}.diagnostics"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>

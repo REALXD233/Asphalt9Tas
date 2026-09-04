@@ -1,0 +1,5 @@
+settings set target.load-cwd-lldbinit false
+settings set target.auto-apply-fixits false
+gdb-remote 127.0.0.1:50391
+process detach
+quit

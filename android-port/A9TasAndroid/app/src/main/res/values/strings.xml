@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">A9 TAS</string>
+    <string name="service_channel">A9 TAS session</string>
+    <string name="service_idle">Session service is ready</string>
+</resources>

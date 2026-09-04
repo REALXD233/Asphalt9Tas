@@ -1,0 +1,4 @@
+#define A9TAS_NAL_CONTROLLER_REVIEW 1
+#define A9TAS_NAL_ACTION_CONTROLLER_REVIEW 1
+#define A9TAS_NAL_EXTERNAL_REPLAY_CONTROLLER_REVIEW 1
+#include "natural_action_lifecycle_controller_v1.cpp"

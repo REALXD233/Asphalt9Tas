@@ -1,0 +1,42 @@
+# Local build environments and generated output
+.idea/
+.vscode/
+.gradle/
+**/build/
+**/.toolchains/
+**/toolchains/
+local.properties
+
+# Signing credentials and private licensing material
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pk8
+*.pem
+*.key
+*.env
+
+# Device captures and reverse-engineering workspaces
+**/evidence/
+**/diagnostics/
+**/ida/
+*.i64
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+*.dmp
+*.tombstone
+
+# Generated packages are published through GitHub Releases
+*.apk
+*.aab
+*.zip
+android-port/A9TasAndroid/app/src/main/assets/runtime/
+
+# Local caches
+__pycache__/
+*.py[cod]
+*.log

@@ -1,0 +1,100 @@
+{
+  "schema": "a9tas-known-good-baseline-v1",
+  "name": "ancient-ruins-zl1-natural-action-900f",
+  "status": "live-proven",
+  "live_pass_document": "evidence/NATURAL_ACTION_900_FRAME_LIVE_REPLAY_PASS_20260822.md",
+  "environment": {
+    "track": "Ancient Ruins",
+    "car": "Chevrolet Camaro ZL1",
+    "frames": 900
+  },
+  "files": [
+    {
+      "role": "guarded_runner",
+      "path": "run-final-writer-natural-action-composite-v1.ps1",
+      "sha256": "45d9ab97434dcc6364e34438c73c196a3e92cdc5a1cd3c213ff8bd0c0e720654"
+    },
+    {
+      "role": "unified_executor",
+      "path": "build/lifecycle-final-writer-natural-action-v1/a9tas_lifecycle_final_writer_natural_action_v1_review_only",
+      "sha256": "b7df3e87d94d83ae2cc43f415abde4666bff43d7fbdd3535cb84e6bed43bf75a"
+    },
+    {
+      "role": "natural_action_controller",
+      "path": "build/natural-action-external-replay-controller-v1/natural_action_external_replay_controller_v1_review_only",
+      "sha256": "7a1659ef56bdd7cad3591ad06ab533b1fa72f31adc1598fec1b8e4c7958a2138"
+    },
+    {
+      "role": "final_writer_payload",
+      "path": "build/final-writer-replay-v1/liba9tas_final_writer_replay_v1_build_only.so",
+      "sha256": "a698ceb02bc68db892d54af84ada6a74f59f1513189376238a5b5b19cf15b763"
+    },
+    {
+      "role": "natural_action_payload",
+      "path": "build/natural-action-replay-payload-v1/liba9tas_natural_action_replay_v1_review_only.so",
+      "sha256": "e610820bed802f19f7ae09e2f889dd826049ef50f0cb4673d6eab4590512478f"
+    },
+    {
+      "role": "preload_bootstrap",
+      "path": "build/final-writer-natural-action-live-v1/liba9tas_bootstrap_final_writer_natural_action_v1.so",
+      "sha256": "d4f2d4639aea8c3369bb9ca514715c96a46f50de236943265b514d072cc65646"
+    },
+    {
+      "role": "injector",
+      "path": "build/a9tas_injector",
+      "sha256": "b1422ad15955cf21563c6be7ea721cf841da16897ee9f052ccef97d0ae415528"
+    },
+    {
+      "role": "recording",
+      "path": "evidence/a9tas_lifecycle_source_900f_20260822_121419_985.a9utk1",
+      "sha256": "727e850fac73cdcf69d5eff1684f946dd129b542e72cf7d34a67fd379d47229b"
+    },
+    {
+      "role": "recording_receipt",
+      "path": "evidence/a9tas_lifecycle_source_900f_20260822_121419_985.a9usr6",
+      "sha256": "c82eb8b3b7f01bb6dc425cdef17570b58a7a40e79816bb8142d3f89f457c4f75"
+    },
+    {
+      "role": "final_writer_target",
+      "path": "evidence/a9tas_lifecycle_natural_900f_20260822_121419_985.a9fwt1",
+      "sha256": "1daf77e1608ad5880192bcd052be936962295f271314f0b98465eaaa80682970"
+    },
+    {
+      "role": "unified_executor_live_receipt",
+      "path": "evidence/a9tas_composite_900f_20260822_122420_779.a9uer8",
+      "sha256": "b1ac9b5f0e881e171522a6bbbcc34480f31ae071ce3287d6ff1b7740df9205aa"
+    },
+    {
+      "role": "final_writer_live_receipt",
+      "path": "evidence/a9tas_composite_900f_20260822_122420_779.a9fwr1",
+      "sha256": "e2ccbc4ec14bc7de92e1034460eeea16b2707abe208223f4d7ecdc2658e9a11c"
+    },
+    {
+      "role": "natural_action_live_receipt",
+      "path": "evidence/a9tas_composite_900f_20260822_122420_779.a9nar6",
+      "sha256": "3ae6d5361ff9bb79450ed58065efd3a1ed9cdfb910abe83fe62a740b7cb4c416"
+    }
+  ],
+  "source_snapshot": [
+    {
+      "path": "src/hwbp_unified_tick_executor_v1.cpp",
+      "sha256": "3d7c5e1641595ac1d65dad9a753aed8e6d20de66580baf3a095408f62cc71184"
+    },
+    {
+      "path": "src/hwbp_final_writer_unified_replay_v1.cpp",
+      "sha256": "9569cea7d0b38e155fe7b31f6cdf33d29060df87651bc30ed2f2aa3b29e17abd"
+    },
+    {
+      "path": "src/hwbp_lifecycle_final_writer_replay_v1.cpp",
+      "sha256": "7363c142314dff2616c89d9d55278069b254505c49858711eec0849a14c524c4"
+    },
+    {
+      "path": "src/hwbp_lifecycle_final_writer_natural_action_replay_v1.cpp",
+      "sha256": "8e5e846aee2cbb5b43bf6c9c36f48de86ab94bb5850d420d405e7e052fc88b9d"
+    },
+    {
+      "path": "src/final_writer_unified_integration_v1.h",
+      "sha256": "d5133430da068b27a28ed93a7718e568bcdde62b8767fc398a9617a1491ba593"
+    }
+  ]
+}

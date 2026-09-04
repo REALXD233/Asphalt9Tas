@@ -1,0 +1,36 @@
+param(
+    [string]$NdkRoot = "C:\Users\Administrator\Documents\a9tasv2\toolchains\android-ndk-r27d"
+)
+
+$ErrorActionPreference = "Stop"
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$header = Join-Path $root "src\camera_active_state_resolver_v1.h"
+$selftest = Join-Path $root "src\camera_active_state_resolver_selftest_v1.cpp"
+$policy = Join-Path $root "tools\test_camera_active_state_resolver_policy_v1.py"
+$outDir = Join-Path $root "build\camera-active-state-resolver-v1"
+$toolBin = Join-Path $NdkRoot "toolchains\llvm\prebuilt\windows-x86_64\bin"
+$arm = Join-Path $toolBin "aarch64-linux-android24-clang++.cmd"
+$x86 = Join-Path $toolBin "x86_64-linux-android24-clang++.cmd"
+$armObject = Join-Path $outDir "camera_active_state_resolver_v1_arm64_review_only.o"
+$x86Object = Join-Path $outDir "camera_active_state_resolver_v1_x86_64_review_only.o"
+
+foreach ($path in @($header, $selftest, $policy, $arm, $x86)) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Missing camera active-state resolver input: $path"
+    }
+}
+New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+
+python -B $policy $header $selftest
+if ($LASTEXITCODE -ne 0) { throw "Camera active-state resolver policy failed" }
+
+foreach ($pair in @(@($arm, $armObject), @($x86, $x86Object))) {
+    & $pair[0] $selftest "-I$(Join-Path $root 'src')" -O2 -std=c++20 `
+        -fno-exceptions -fno-rtti -Wall -Wextra -Werror -c -o $pair[1]
+    if ($LASTEXITCODE -ne 0) { throw "Camera active-state resolver build failed" }
+}
+
+Write-Output "CAMERA_ACTIVE_STATE_RESOLVER_BUILD passed=1 read_only=1 arm64=1 x86_64=1 device_access=0 deployed=0"
+Write-Output "header_sha256=$((Get-FileHash -LiteralPath $header -Algorithm SHA256).Hash.ToLowerInvariant())"
+Write-Output "arm64_object_sha256=$((Get-FileHash -LiteralPath $armObject -Algorithm SHA256).Hash.ToLowerInvariant())"
+Write-Output "x86_64_object_sha256=$((Get-FileHash -LiteralPath $x86Object -Algorithm SHA256).Hash.ToLowerInvariant())"

@@ -1,0 +1,365 @@
+// probe_selftest.cpp v2 — isolated ARM64 self-test of the PhysicsDispatchProbe
+// mechanism, executed directly on the LDPlayer guest (translated by Houdini).
+// It does NOT touch the game or its process.
+//
+// v2 changes: all diagnostics go to stderr (unbuffered, survives crashes);
+// every install step is logged; DummyDispatch captures its entry registers to
+// g_entry_regs; a plain-C control function (PlainFunc) isolates Houdini's
+// argument delivery from naked-function behavior; the dummy result no longer
+// depends on NZCV (325 = pair0+pair1+a+b+c+frame with pair={100,200},a=2,b=3,
+// c=4,frame=16) so the flag path is tested separately via the wrappers.
+//
+// Modes:
+//   plain    : PlainFunc direct C call (expect 325)
+//   dummy    : DummyDispatch direct C call (expect 325), captures entry regs
+//   flags    : CallWithoutCarry/CallWithCarry (expect 325/326)
+//   install  : install probe first (game parity), then dummy call (expect 325)
+//   late     : call unpatched, install, call again (Houdini cache question)
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <sys/mman.h>
+#include <unistd.h>
+
+extern "C" {
+std::atomic<std::uint64_t> g_calls{0};
+void* g_probe_trampoline = nullptr;
+std::uint64_t g_entry_regs[8] = {0};  // x0,x1,x2,x3,d0,nzcv,[x0],[x0+8]
+}
+
+#define LOG(fmt, ...) \
+    do { std::fprintf(stderr, "[selftest] " fmt "\n", ##__VA_ARGS__); } while (0)
+
+// First 16 bytes of the game's 0x38b7930 — identical to DummyDispatch's
+// prologue (verified: f81d0ff6 a90153f5 a9027bf3 a9402408).
+constexpr std::uint8_t kDispatchSignature[16] = {
+    0xf6, 0x0f, 0x1d, 0xf8, 0xf5, 0x53, 0x01, 0xa9,
+    0xf3, 0x7b, 0x02, 0xa9, 0x08, 0x24, 0x40, 0xa9,
+};
+
+extern "C" __attribute__((noinline)) void ProbeImpl(void*, const void*) {
+    g_calls.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" __attribute__((naked)) void ProbeEntry() {
+    // Identical veneer to payload_probe_dev.cpp: save all GPRs/Q regs + NZCV,
+    // count, restore, tail-branch into the copied-prologue trampoline.
+    __asm__ volatile(
+        "sub sp, sp, #0x310\n"
+        "stp x0, x1, [sp]\n"
+        "stp x2, x3, [sp, #0x10]\n"
+        "stp x4, x5, [sp, #0x20]\n"
+        "stp x6, x7, [sp, #0x30]\n"
+        "stp x8, x9, [sp, #0x40]\n"
+        "stp x10, x11, [sp, #0x50]\n"
+        "stp x12, x13, [sp, #0x60]\n"
+        "stp x14, x15, [sp, #0x70]\n"
+        "stp x16, x17, [sp, #0x80]\n"
+        "stp x18, x19, [sp, #0x90]\n"
+        "stp x20, x21, [sp, #0xa0]\n"
+        "stp x22, x23, [sp, #0xb0]\n"
+        "stp x24, x25, [sp, #0xc0]\n"
+        "stp x26, x27, [sp, #0xd0]\n"
+        "stp x28, x29, [sp, #0xe0]\n"
+        "str x30, [sp, #0xf0]\n"
+        "stp q0, q1, [sp, #0x100]\n"
+        "stp q2, q3, [sp, #0x120]\n"
+        "stp q4, q5, [sp, #0x140]\n"
+        "stp q6, q7, [sp, #0x160]\n"
+        "stp q8, q9, [sp, #0x180]\n"
+        "stp q10, q11, [sp, #0x1a0]\n"
+        "stp q12, q13, [sp, #0x1c0]\n"
+        "stp q14, q15, [sp, #0x1e0]\n"
+        "stp q16, q17, [sp, #0x200]\n"
+        "stp q18, q19, [sp, #0x220]\n"
+        "stp q20, q21, [sp, #0x240]\n"
+        "stp q22, q23, [sp, #0x260]\n"
+        "stp q24, q25, [sp, #0x280]\n"
+        "stp q26, q27, [sp, #0x2a0]\n"
+        "stp q28, q29, [sp, #0x2c0]\n"
+        "stp q30, q31, [sp, #0x2e0]\n"
+        "mrs x16, nzcv\n"
+        "str x16, [sp, #0x300]\n"
+        "ldp x0, x1, [sp]\n"
+        "bl ProbeImpl\n"
+        "ldp x0, x1, [sp]\n"
+        "ldp x2, x3, [sp, #0x10]\n"
+        "ldp x4, x5, [sp, #0x20]\n"
+        "ldp x6, x7, [sp, #0x30]\n"
+        "ldp x8, x9, [sp, #0x40]\n"
+        "ldp x10, x11, [sp, #0x50]\n"
+        "ldp x12, x13, [sp, #0x60]\n"
+        "ldp x14, x15, [sp, #0x70]\n"
+        "ldp x16, x17, [sp, #0x80]\n"
+        "ldp x18, x19, [sp, #0x90]\n"
+        "ldp x20, x21, [sp, #0xa0]\n"
+        "ldp x22, x23, [sp, #0xb0]\n"
+        "ldp x24, x25, [sp, #0xc0]\n"
+        "ldp x26, x27, [sp, #0xd0]\n"
+        "ldp x28, x29, [sp, #0xe0]\n"
+        "ldr x30, [sp, #0xf0]\n"
+        "ldp q0, q1, [sp, #0x100]\n"
+        "ldp q2, q3, [sp, #0x120]\n"
+        "ldp q4, q5, [sp, #0x140]\n"
+        "ldp q6, q7, [sp, #0x160]\n"
+        "ldp q8, q9, [sp, #0x180]\n"
+        "ldp q10, q11, [sp, #0x1a0]\n"
+        "ldp q12, q13, [sp, #0x1c0]\n"
+        "ldp q14, q15, [sp, #0x1e0]\n"
+        "ldp q16, q17, [sp, #0x200]\n"
+        "ldp q18, q19, [sp, #0x220]\n"
+        "ldp q20, q21, [sp, #0x240]\n"
+        "ldp q22, q23, [sp, #0x260]\n"
+        "ldp q24, q25, [sp, #0x280]\n"
+        "ldp q26, q27, [sp, #0x2a0]\n"
+        "ldp q28, q29, [sp, #0x2c0]\n"
+        "ldp q30, q31, [sp, #0x2e0]\n"
+        "ldr x16, [sp, #0x300]\n"
+        "msr nzcv, x16\n"
+        "add sp, sp, #0x310\n"
+        "adrp x16, :got:g_probe_trampoline\n"
+        "ldr x16, [x16, #:got_lo12:g_probe_trampoline]\n"
+        "ldr x16, [x16]\n"
+        "br x16\n");
+}
+
+void WriteAbsoluteJump(std::uint8_t* destination, std::uintptr_t target) {
+    constexpr std::uint32_t load_x17_literal = 0x58000051;
+    constexpr std::uint32_t branch_x17 = 0xD61F0220;
+    std::memcpy(destination, &load_x17_literal, sizeof(load_x17_literal));
+    std::memcpy(destination + 4, &branch_x17, sizeof(branch_x17));
+    std::memcpy(destination + 8, &target, sizeof(target));
+}
+
+int MappingProtection(void* address) {
+    FILE* maps = std::fopen("/proc/self/maps", "re");
+    if (maps == nullptr) return 0;
+    char line[2048]{};
+    const auto target = reinterpret_cast<std::uintptr_t>(address);
+    int protection = 0;
+    while (std::fgets(line, sizeof(line), maps) != nullptr) {
+        unsigned long long start = 0, end = 0;
+        char perms[5]{};
+        if (std::sscanf(line, "%llx-%llx %4s", &start, &end, perms) == 3 &&
+            target >= start && target < end) {
+            if (perms[0] == 'r') protection |= PROT_READ;
+            if (perms[1] == 'w') protection |= PROT_WRITE;
+            if (perms[2] == 'x') protection |= PROT_EXEC;
+            break;
+        }
+    }
+    std::fclose(maps);
+    return protection;
+}
+
+// Same install logic as payload_probe_dev.cpp::InstallPhysicsDispatchProbe,
+// with per-step logging to stderr.
+bool InstallProbe(std::uint8_t* target) {
+    if (std::memcmp(target, kDispatchSignature, 16) != 0) {
+        LOG("signature mismatch; abort");
+        return false;
+    }
+    std::uint8_t original_bytes[16]{};
+    std::memcpy(original_bytes, target, sizeof(original_bytes));
+
+    const long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) return false;
+    void* page = reinterpret_cast<void*>(
+        reinterpret_cast<std::uintptr_t>(target) &
+        ~static_cast<std::uintptr_t>(page_size - 1));
+    const int original_protection = MappingProtection(page);
+    if (original_protection == 0) {
+        LOG("target page protection unknown; abort");
+        return false;
+    }
+    LOG("target=%p page=%p original_prot=0x%x", target, page, original_protection);
+
+    auto* trampoline = static_cast<std::uint8_t*>(
+        mmap(nullptr, 32, PROT_READ | PROT_WRITE,
+             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    if (trampoline == MAP_FAILED) {
+        LOG("trampoline mmap failed");
+        return false;
+    }
+    LOG("trampoline mmap ok addr=%p", trampoline);
+    std::memcpy(trampoline, target, 16);
+    WriteAbsoluteJump(trampoline + 16, reinterpret_cast<std::uintptr_t>(target + 16));
+    __builtin___clear_cache(reinterpret_cast<char*>(trampoline),
+                            reinterpret_cast<char*>(trampoline + 32));
+    LOG("trampoline written + clear_cache ok");
+    if (mprotect(trampoline, 32, PROT_READ) != 0) {
+        LOG("trampoline mprotect(R) failed; keeping RW (errno=%d)", errno);
+    } else {
+        LOG("trampoline mprotect(R) ok");
+    }
+
+    if (mprotect(page, static_cast<size_t>(page_size),
+                 original_protection | PROT_WRITE) != 0) {
+        munmap(trampoline, 32);
+        LOG("target mprotect(+W) FAILED errno=%d; abort", errno);
+        return false;
+    }
+    LOG("target mprotect(+W) ok");
+
+    g_probe_trampoline = trampoline;
+    WriteAbsoluteJump(target, reinterpret_cast<std::uintptr_t>(&ProbeEntry));
+    __builtin___clear_cache(reinterpret_cast<char*>(target),
+                            reinterpret_cast<char*>(target + 16));
+    LOG("target patched + clear_cache ok");
+
+    if (mprotect(page, static_cast<size_t>(page_size), original_protection) != 0) {
+        LOG("target mprotect restore FAILED errno=%d; rolling back", errno);
+        mprotect(page, static_cast<size_t>(page_size),
+                 original_protection | PROT_WRITE);
+        std::memcpy(target, original_bytes, sizeof(original_bytes));
+        __builtin___clear_cache(reinterpret_cast<char*>(target),
+                                reinterpret_cast<char*>(target + 16));
+        mprotect(page, static_cast<size_t>(page_size), original_protection);
+        munmap(trampoline, 32);
+        g_probe_trampoline = nullptr;
+        return false;
+    }
+    LOG("target mprotect restore ok; probe installed");
+    return true;
+}
+
+// Plain-C control: tests Houdini's argument delivery without naked functions.
+extern "C" __attribute__((noinline)) std::uint64_t PlainFunc(
+    const std::uint64_t* pair, std::uint64_t frame, std::uint64_t a,
+    std::uint64_t b, double c) {
+    return pair[0] + pair[1] + frame + a + b + static_cast<std::uint64_t>(c);
+}
+
+// DummyDispatch — prologue identical to game 0x38b7930. Args on entry:
+// x0=pair (2 u64), x1=frame, x2=a, x3=b, d0=c. Captures entry registers into
+// g_entry_regs, then returns pair0+pair1+a+b+c+frame (325 for the test args).
+extern "C" __attribute__((naked)) std::uint64_t DummyDispatch(
+    const std::uint64_t* pair, std::uint64_t frame, std::uint64_t a,
+    std::uint64_t b, double c) {
+    __asm__ volatile(
+        "str x22, [sp, #-0x30]!\n"
+        "stp x21, x20, [sp, #0x10]\n"
+        "stp x19, x30, [sp, #0x20]\n"
+        "ldp x8, x9, [x0]\n"
+        "mov x20, x1\n"
+        // capture entry regs to g_entry_regs (x16/x17 are scratch)
+        "adrp x16, :got:g_entry_regs\n"
+        "ldr x16, [x16, #:got_lo12:g_entry_regs]\n"
+        "ldr x16, [x16]\n"
+        "stp x0, x1, [x16]\n"
+        "stp x2, x3, [x16, #0x10]\n"
+        "str d0, [x16, #0x20]\n"
+        "mrs x17, nzcv\n"
+        "str x17, [x16, #0x28]\n"
+        "ldr x17, [x0]\n"
+        "str x17, [x16, #0x30]\n"
+        "ldr x17, [x0, #8]\n"
+        "str x17, [x16, #0x38]\n"
+        // body: 325 = 100+200+2+3+4+16
+        "add x8, x8, x9\n"
+        "add x8, x8, x2\n"
+        "add x8, x8, x3\n"
+        "fmov x9, d0\n"
+        "add x8, x8, x9\n"
+        "add x8, x8, x20\n"
+        "mov x0, x8\n"
+        "ldp x19, x30, [sp, #0x20]\n"
+        "ldp x21, x20, [sp, #0x10]\n"
+        "ldr x22, [sp], #0x30\n"
+        "ret\n");
+}
+
+// Flag-test wrappers: set NZCV deterministically and tail-call DummyDispatch.
+extern "C" __attribute__((naked)) std::uint64_t CallWithoutCarry(
+    const std::uint64_t* pair, std::uint64_t frame, std::uint64_t a,
+    std::uint64_t b, double c) {
+    __asm__ volatile("mov x9, #0\ncmp x9, #1\nb DummyDispatch\n");
+}
+
+extern "C" __attribute__((naked)) std::uint64_t CallWithCarry(
+    const std::uint64_t* pair, std::uint64_t frame, std::uint64_t a,
+    std::uint64_t b, double c) {
+    __asm__ volatile("cmp x2, x2\nb DummyDispatch\n");
+}
+
+static constexpr std::uint64_t kExpect = 325;
+
+int main(int argc, char** argv) {
+    const char* mode = argc > 1 ? argv[1] : "dummy";
+    std::uint64_t pair[2] = {100, 200};
+    LOG("mode=%s pid=%d sig_match=%d", mode, getpid(),
+        std::memcmp(reinterpret_cast<void*>(&DummyDispatch),
+                    kDispatchSignature, 16) == 0);
+    LOG("pair_local=%llu,%llu", static_cast<unsigned long long>(pair[0]),
+        static_cast<unsigned long long>(pair[1]));
+
+    if (std::strcmp(mode, "plain") == 0) {
+        const std::uint64_t r = PlainFunc(pair, 16, 2, 3, 4.0);
+        LOG("plain result=%llu (expect %llu)", static_cast<unsigned long long>(r),
+            static_cast<unsigned long long>(kExpect));
+        return 0;
+    }
+
+    if (std::strcmp(mode, "dummy") == 0) {
+        const std::uint64_t r = DummyDispatch(pair, 16, 2, 3, 4.0);
+        LOG("dummy result=%llu (expect %llu) entry: x0=%llx x1=%llx x2=%llx "
+            "x3=%llx d0=%llx nzcv=%llx pair_at_x0=%llx,%llx",
+            static_cast<unsigned long long>(r),
+            static_cast<unsigned long long>(kExpect),
+            static_cast<unsigned long long>(g_entry_regs[0]),
+            static_cast<unsigned long long>(g_entry_regs[1]),
+            static_cast<unsigned long long>(g_entry_regs[2]),
+            static_cast<unsigned long long>(g_entry_regs[3]),
+            static_cast<unsigned long long>(g_entry_regs[4]),
+            static_cast<unsigned long long>(g_entry_regs[5]),
+            static_cast<unsigned long long>(g_entry_regs[6]),
+            static_cast<unsigned long long>(g_entry_regs[7]));
+        return 0;
+    }
+
+    if (std::strcmp(mode, "flags") == 0) {
+        const std::uint64_t r1 = CallWithoutCarry(pair, 16, 2, 3, 4.0);
+        const std::uint64_t r2 = CallWithCarry(pair, 16, 2, 3, 4.0);
+        LOG("flags r_nocarry=%llu r_carry=%llu (expect %llu %llu)",
+            static_cast<unsigned long long>(r1),
+            static_cast<unsigned long long>(r2),
+            static_cast<unsigned long long>(kExpect),
+            static_cast<unsigned long long>(kExpect + 1));
+        return 0;
+    }
+
+    if (std::strcmp(mode, "install") == 0) {
+        if (!InstallProbe(reinterpret_cast<std::uint8_t*>(&DummyDispatch))) {
+            LOG("INSTALL FAILED");
+            return 1;
+        }
+        LOG("install ok; calling dummy");
+        const std::uint64_t r = DummyDispatch(pair, 16, 2, 3, 4.0);
+        LOG("installed result=%llu calls=%llu (expect %llu 1)", 
+            static_cast<unsigned long long>(r),
+            static_cast<unsigned long long>(g_calls.load()),
+            static_cast<unsigned long long>(kExpect));
+        return 0;
+    }
+
+    if (std::strcmp(mode, "late") == 0) {
+        const std::uint64_t before = DummyDispatch(pair, 16, 2, 3, 4.0);
+        LOG("late first(unpatched) result=%llu calls=%llu",
+            static_cast<unsigned long long>(before),
+            static_cast<unsigned long long>(g_calls.load()));
+        if (!InstallProbe(reinterpret_cast<std::uint8_t*>(&DummyDispatch))) {
+            LOG("INSTALL FAILED");
+            return 1;
+        }
+        const std::uint64_t after = DummyDispatch(pair, 16, 2, 3, 4.0);
+        LOG("late second result=%llu calls=%llu (calls==1 => Houdini re-read "
+            "patched entry; calls==0 => translation cache reused)",
+            static_cast<unsigned long long>(after),
+            static_cast<unsigned long long>(g_calls.load()));
+        return 0;
+    }
+
+    LOG("unknown mode %s (plain|dummy|flags|install|late)", mode);
+    return 2;
+}
