@@ -85,8 +85,15 @@ final class TasOverlayController {
     private String overlayLibraryRevision = "";
     private long lastPresentedFailureUpdate = Long.MIN_VALUE;
 
+    private final Runnable preferenceRefresh = this::refreshState;
     private final SharedPreferences.OnSharedPreferenceChangeListener preferenceListener =
-            (sharedPreferences, key) -> handler.post(this::refreshState);
+            (sharedPreferences, key) -> {
+                // SharedPreferences notifies once per changed key. Coalesce a
+                // transaction into one render on the next display frame.
+                handler.removeCallbacks(preferenceRefresh);
+                handler.postDelayed(preferenceRefresh, 16L);
+            };
+
 
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -136,6 +143,7 @@ final class TasOverlayController {
 
     void hide() {
         handler.removeCallbacks(refresh);
+        handler.removeCallbacks(preferenceRefresh);
         if (preferenceListenerRegistered) {
             preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener);
             preferenceListenerRegistered = false;
@@ -307,7 +315,7 @@ final class TasOverlayController {
         });
         content.addView(loadPrefix);
 
-        checkpointButton = button("精确暂停并保存当前段", 0xFF2B303B);
+        checkpointButton = button("保存至当前段（暂停时）", 0xFF2B303B);
         checkpointButton.setOnClickListener(view -> {
             // This request is intentionally asynchronous: the recorder first
             // seals the last complete Tick and only then publishes the file.
@@ -323,7 +331,7 @@ final class TasOverlayController {
                 statusText.setTextColor(0xFFA9A7FF);
             }
             if (detailText != null)
-                detailText.setText("等待下一个完整 Tick · 将自动暂停并保存");
+                detailText.setText("保存已完成的 Tick · 不会取消暂停");
             dispatch(TasForegroundService.ACTION_OVERLAY_CHECKPOINT);
         });
         addButton(content, checkpointButton, 8);
@@ -573,7 +581,7 @@ final class TasOverlayController {
         }
 
         if (bubble != null) {
-            bubble.setText(failure ? "ERR" : recording || branchRecording ? "REC" :
+            setTextIfChanged(bubble, failure ? "ERR" : recording || branchRecording ? "REC" :
                     branchArmed ? "ARM" : replaying ? "PLAY" :
                     waiting ? "WAIT" : preparing ? "PREP" : "TAS");
             bubble.setTextSize(failure || recording || branchRecording || branchArmed || replaying ||
@@ -584,7 +592,7 @@ final class TasOverlayController {
                             preparing ? 0xE65E5CE6 : 0xE60A84FF, 29));
         }
         if (!expanded || statusText == null) return;
-        statusText.setText(failure ? "操作失败" : retryReady ? "可直接重试" :
+        setTextIfChanged(statusText, failure ? "操作失败" : retryReady ? "可直接重试" :
                 hardPaused ? "断点已精确冻结" :
                 checkpointUiPending ? "保存请求已接收" :
                 recovery ? "需要先恢复旧会话" :
@@ -598,19 +606,19 @@ final class TasOverlayController {
                 recording || branchRecording ? 0xFFFF6B63 : branchArmed ? 0xFFFFC14D :
                         replaying ? 0xFF55D87A :
                         waiting ? 0xFFFFC14D : preparing ? 0xFFA9A7FF : Color.WHITE);
-        tickText.setText(failure ? "请查看下方原因；修正后可直接重试" : hardPaused ?
+        setTextIfChanged(tickText, failure ? "请查看下方原因；修正后可直接重试" : hardPaused ?
                 "游戏进程已停止 · 当前 Tick 不会继续推进" :
-                checkpointUiPending ? "正在对齐完整 Tick 并保存" :
+                checkpointUiPending ? "正在保存已完成的 Tick" :
                 branchArmed ? "等待第一个真实 Tick · 暂停时间不会写入录像" :
                         active ? ticks + " Tick" : "不访问游戏内存 · 低占用待命");
-        detailText.setText(checkpointUiPending ?
-                "运行中会自动暂停；若已暂停则保存最后一个完整 Tick" :
+        setTextIfChanged(detailText, checkpointUiPending ?
+                "保存最后一个完整 Tick · 不会取消暂停" :
                 preferences.getString("detail", ""));
         startButton.setEnabled(!active && prepared && !recovery &&
                 (!loadPrefix || selected));
         if (responseModeButton != null) {
             boolean lowLatency = preferences.getBoolean("control_low_latency", true);
-            responseModeButton.setText(lowLatency ?
+            setTextIfChanged(responseModeButton, lowLatency ?
                     "响应模式 · 极速响应" : "响应模式 · 游戏流畅");
             responseModeButton.setEnabled(!active);
             responseModeButton.setAlpha(active ? 0.58f : 1f);
@@ -618,29 +626,29 @@ final class TasOverlayController {
         if (hardResumeButton != null) {
             hardResumeButton.setVisibility(hardPaused ? View.VISIBLE : View.GONE);
             hardResumeButton.setEnabled(hardPaused && !active);
-            hardResumeButton.setText(active && hardPaused ? "正在恢复并武装…" :
+            setTextIfChanged(hardResumeButton, active && hardPaused ? "正在恢复并武装…" :
                     "恢复并准备续录");
             hardResumeButton.setAlpha(hardResumeButton.isEnabled() ? 1f : 0.58f);
         }
-        startButton.setText(loadPrefix ? selected ?
+        setTextIfChanged(startButton, loadPrefix ? selected ?
                 "加载当前前缀并连续续录" : "请先选择前缀录像" : "开始连续刷圈");
-        selectedPrefixText.setText(loadPrefix ? selected ?
+        setTextIfChanged(selectedPrefixText, loadPrefix ? selected ?
                 "当前加载：" + selectedTitle + " · 前 " +
                         (preferences.getLong("replay_target_tick", -1L) + 1L) + " Tick" :
                 "当前加载：尚未选择存档" :
                 "当前模式：不加载存档 · 从 Tick 0 直接录制");
         checkpointButton.setEnabled((recording || branchRecording) && !checkpointUiPending);
-        checkpointButton.setText(checkpointUiPending ?
-                "已接收 · 正在保存…" : "精确暂停并保存当前段");
+        setTextIfChanged(checkpointButton, checkpointUiPending ?
+                "已接收 · 正在保存…" : "保存至当前段（暂停时）");
         stopButton.setEnabled(active);
         long target = preferences.getLong("replay_target_tick", -1L);
-        selectedRecordingText.setText(selected ? selectedTitle +
+        setTextIfChanged(selectedRecordingText, selected ? selectedTitle +
                 (target >= 0 ? " · 前 " + (target + 1L) + " Tick" : "") : "尚未选择录像");
         if (overlayTargetLengthInput != null && overlayTargetDraft == null) {
             String wanted = selected && target >= 0 ? Long.toString(target + 1L) : "";
             if (!wanted.equals(overlayTargetLengthInput.getText().toString())) {
                 overlayTargetTextBinding = true;
-                overlayTargetLengthInput.setText(wanted);
+                setTextIfChanged(overlayTargetLengthInput, wanted);
                 overlayTargetTextBinding = false;
             }
         }
@@ -651,7 +659,7 @@ final class TasOverlayController {
         setOverlayEditorEnabled(libraryEditable);
         if (metadataToggleButton != null) {
             metadataToggleButton.setEnabled(libraryEditable);
-            metadataToggleButton.setText(!libraryEditable && active ?
+            setTextIfChanged(metadataToggleButton, !libraryEditable && active ?
                     "任务结束后可编辑录像信息" : metadataExpanded ?
                     "收起录像信息编辑" : "编辑当前录像信息");
             metadataToggleButton.setAlpha(libraryEditable ? 1f : 0.58f);
@@ -667,7 +675,7 @@ final class TasOverlayController {
         }
         if (inspectPrefixButton != null) {
             inspectPrefixButton.setEnabled(!active && prepared && selected && !recovery);
-            inspectPrefixButton.setText(active && "replay".equals(kind) ?
+            setTextIfChanged(inspectPrefixButton, active && "replay".equals(kind) ?
                     "正在加载检查位置…" : "加载到此 Tick 并暂停检查");
             inspectPrefixButton.setAlpha(inspectPrefixButton.isEnabled() ? 1f : 0.42f);
         }
@@ -676,13 +684,13 @@ final class TasOverlayController {
         branchButton.setEnabled(replayCanBeInterrupted ||
                 !active && prepared && selected && !recovery);
         if (waiting && selected) branchButton.setEnabled(true);
-        branchButton.setText(replayCanBeInterrupted ?
+        setTextIfChanged(branchButton, replayCanBeInterrupted ?
                 "停止加载并从当前点续录" : waiting ?
                 "回放已保存片段并续录" : "从所选 Tick 续录");
         restoreButton.setEnabled(!active && (prepared || recovery ||
                 preferences.getBoolean("session_hooks_installed", false)));
         int speed = preferences.getInt("replay_speed_factor", 1);
-        speedButton.setText("回放速度 · " + speed + "×");
+        setTextIfChanged(speedButton, "回放速度 · " + speed + "×");
         startButton.setAlpha(startButton.isEnabled() ? 1f : 0.42f);
         checkpointButton.setBackground(roundRect(
                 checkpointUiPending ? 0xFF0A84FF : 0xFF2B303B, 13));
@@ -694,6 +702,10 @@ final class TasOverlayController {
         replayButton.setAlpha(replayButton.isEnabled() ? 1f : 0.42f);
         branchButton.setAlpha(branchButton.isEnabled() ? 1f : 0.42f);
         restoreButton.setAlpha(restoreButton.isEnabled() ? 1f : 0.42f);
+    }
+
+    private static void setTextIfChanged(TextView view, CharSequence value) {
+        if (!android.text.TextUtils.equals(view.getText(), value)) view.setText(value);
     }
 
     private static String compactState(String state) {

@@ -24,10 +24,16 @@ final class SessionOrchestrator {
     private static final String ACK = "I_ACCEPT_G4_TICK_COORDINATOR_V1";
     private static final int CAPACITY = 7200;
 
+    static boolean shouldSealExistingTicks(boolean complete, int ticks, boolean saveRequested) {
+        return !complete && ticks > 0 && saveRequested;
+    }
+
     interface OperationObserver {
         boolean cancellationRequested();
         boolean replayInterruptionRequested();
         boolean stopRecordingWhenProgressStalls();
+        default boolean checkpointRequested() { return false; }
+        default void onSaveStage(String message) {}
         long progressStallTimeoutMillis();
         long observationPollMillis();
         void onProgress(int ticks, int limit);
@@ -531,6 +537,7 @@ final class SessionOrchestrator {
             }
 
             String remoteRecording = prefix + ".a9g4r2";
+            if (observer != null) observer.onSaveStage("正在导出已封存的 " + ticks + " Tick");
             RootShell.Result dumped = dumpCompletedRecordingAfterHelpersSettle(
                     identity, owner, remoteRecording, CAPACITY,
                     prefix + ".dump.stdout.txt");
@@ -540,10 +547,12 @@ final class SessionOrchestrator {
                     "recording dump rejected: " + tail(dumpText));
             throwIfCancelled(observer);
 
+            if (observer != null) observer.onSaveStage("正在复制录像到应用存储");
             File local = checkpoint
                     ? copyRecordingIntoApp(context, remoteRecording, ticks,
                             "drafts", "attempt-")
                     : copyRecordingIntoApp(context, remoteRecording, ticks);
+            if (observer != null) observer.onSaveStage("正在检查录像并写入存档");
             A9TasArchive.SourceSummary source = A9TasArchive.inspectSource(local);
             require(source.frameCount == ticks, "saved recording tick count changed");
             String hash = sha256(local);
@@ -1558,6 +1567,11 @@ final class SessionOrchestrator {
                 lastTicks = ticks;
             }
             if (complete) return status;
+            // An explicit save uses the already published prefix immediately.
+            // Keep race-end completion above it so a simultaneous finish wins.
+            if (shouldSealExistingTicks(complete, ticks,
+                    observer != null && observer.checkpointRequested()))
+                throw new RecordingPausedException(ticks);
             // A manually resumed branch is already armed while the game is
             // paused.  Do not expire or classify that intentional tick-zero
             // wait as a recording stall.  Once the first authoritative tick

@@ -7,6 +7,11 @@ $ErrorActionPreference = 'Stop'
 $portRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $runtime = Join-Path $portRoot 'A9TasAndroid/app/src/main/assets/runtime'
 $manifestPath = Join-Path $runtime 'manifest.json'
+if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+    Copy-Item -LiteralPath (Join-Path $portRoot 'config/runtime-manifest-template.json') `
+        -Destination $manifestPath
+}
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $hashes = @{}
 
@@ -18,6 +23,9 @@ $sharedBuild = Join-Path $portRoot 'build-g4-input-action-live-gate-v1.ps1'
 if ($LASTEXITCODE -ne 0) { throw 'Shared G4 runtime build failed' }
 $sharedOutput = Join-Path $portRoot 'build/g4-input-action-live-gate-v1'
 $payloadSource = Join-Path $portRoot 'build/g4-multi-hook-runtime-v1/liba9tas_g4_multi_hook_runtime_v1.so'
+# The observer is a separate build product; a clean checkout cannot inherit it.
+& (Join-Path $portRoot 'build-physics-interval-readonly-v1.ps1') -NdkRoot $NdkRoot | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'x86 readonly observer build failed' }
 $carrierSource = Get-ChildItem -LiteralPath $sharedOutput -File `
     -Filter 'a9tas_habi1_early_carrier_*' | Sort-Object LastWriteTimeUtc -Descending |
     Select-Object -First 1
@@ -26,7 +34,9 @@ $sharedArtifacts = @(
     @{ name = 'liba9tas_g4_multi_hook_runtime_v1.so'; source = $payloadSource },
     @{ name = 'liba9tas_g4_input_action_bootstrap_v1.so'; source = Join-Path $sharedOutput 'liba9tas_g4_input_action_bootstrap_v1.so' },
     @{ name = 'a9tas_g4_input_action_controller_v1'; source = Join-Path $sharedOutput 'a9tas_g4_input_action_controller_v1' },
-    @{ name = $carrierSource.Name; source = $carrierSource.FullName }
+    @{ name = $carrierSource.Name; source = $carrierSource.FullName },
+    @{ name = 'a9tas_g8_profile_physics_interval_readonly_observer_v1';
+       source = Join-Path $portRoot 'build/physics-interval-readonly-v1/a9tas_g8_profile_physics_interval_readonly_observer_v1' }
 )
 foreach ($artifact in $sharedArtifacts) {
     $target = Join-Path $runtime $artifact.name

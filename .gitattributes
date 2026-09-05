@@ -1,0 +1,5 @@
+# Native source and baseline checksums must not vary with Windows checkout settings.
+* text=auto eol=lf
+*.bin -text
+*.png -text
+*.a9tas -text

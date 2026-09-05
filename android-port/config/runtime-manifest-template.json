@@ -1,0 +1,135 @@
+{
+  "schema": 2,
+  "identity_helpers": [
+    {
+      "host_machine": "arm64",
+      "asset": "runtime/a9tas_identity_probe_arm64_v1",
+      "device_name": "a9tas_identity_probe_arm64_v1",
+      "sha256": "8c906d4a7ffb569dd238ae5ab1a3f912c68403039a3ed620b7ffc9bb346daf6c"
+    },
+    {
+      "host_machine": "x86_64",
+      "asset": "runtime/a9tas_identity_probe_x86_64_v1",
+      "device_name": "a9tas_identity_probe_x86_64_v1",
+      "sha256": "3bc1a0c4c16bcf1941e8539bb62fcb6a0dfd3ba317145181b9a1a33fec6f9cf8"
+    }
+  ],
+  "artifact_sets": [
+    {
+      "id": "x86_64-nativebridge-libnb-0e34ebf9",
+      "label": "x86_64 NativeBridge (verified LDPlayer 9 runtime)",
+      "enabled": true,
+      "accepted": true,
+      "host_machine": "x86_64",
+      "bridge_set": "libhoudini.so+libnb.so",
+      "libc_binding": "exact",
+      "libc_sha256": "0e34ebf9663efde513ad4e7e08bc5c6da4d20a41770ce4990e68faa95679e0dc",
+      "carrier_receipt_prefix": "HABI1_EARLY_CARRIER",
+      "payload_staging": "local_tmp",
+      "roles": {
+        "carrier": "a9tas_habi1_early_carrier_3ceb2a5c6c727581",
+        "controller": "a9tas_g4_input_action_controller_v1",
+        "observer": "a9tas_g8_profile_physics_interval_readonly_observer_v1",
+        "payload": "liba9tas_g4_multi_hook_runtime_v1.so",
+        "bootstrap": "liba9tas_g4_input_action_bootstrap_v1.so",
+        "practice_probe": "a9tas_practice_mode_readonly_probe_x86_64_v1"
+      },
+      "artifacts": [
+        {
+          "asset": "runtime/liba9tas_g4_multi_hook_runtime_v1.so",
+          "device_name": "liba9tas_g4_multi_hook_runtime_v1.so",
+          "mode": "0644",
+          "sha256": "c920ccec61ea9aa1f7889a88b8b5df8a31b57b5a745d8a776cf15c6bd5d2b023"
+        },
+        {
+          "asset": "runtime/liba9tas_g4_input_action_bootstrap_v1.so",
+          "device_name": "liba9tas_g4_input_action_bootstrap_v1.so",
+          "mode": "0644",
+          "sha256": "a25bd3d70439f227cbec26d7a7296c3e21b0f0746888e359477c02f02b7fd6ae"
+        },
+        {
+          "asset": "runtime/a9tas_g4_input_action_controller_v1",
+          "device_name": "a9tas_g4_input_action_controller_v1",
+          "mode": "0700",
+          "sha256": "7bc57d2a54bc1f6d3d532efd260fef097c004a88e0e0608c1831b4663623043d"
+        },
+        {
+          "asset": "runtime/a9tas_habi1_early_carrier_3ceb2a5c6c727581",
+          "device_name": "a9tas_habi1_early_carrier_3ceb2a5c6c727581",
+          "mode": "0700",
+          "sha256": "d4a2f80e2f630fcda4f15eafa8d2158f753ba2aee5d293ee18b180600adc7bde"
+        },
+        {
+          "asset": "runtime/a9tas_g8_profile_physics_interval_readonly_observer_v1",
+          "device_name": "a9tas_g8_profile_physics_interval_readonly_observer_v1",
+          "mode": "0700",
+          "sha256": "bab2716e4ea033bec2f28688cfea837de3b1d9f14a4a48b4bf5af70a7060c0e1"
+        },
+        {
+          "asset": "runtime/a9tas_practice_mode_readonly_probe_x86_64_v1",
+          "device_name": "a9tas_practice_mode_readonly_probe_x86_64_v1",
+          "mode": "0700",
+          "sha256": "b19e2411a8993e1fca9cac1460c4e453ad559f044582797c06c36a57c2b4aeb1"
+        }
+      ]
+    },
+    {
+      "id": "arm64-native-rooted-candidate-v1",
+      "label": "Native ARM64 rooted Android 7 (verified)",
+      "enabled": true,
+      "accepted": true,
+      "host_machine": "arm64",
+      "bridge_set": "none",
+      "libc_binding": "dynamic",
+      "libc_sha256": "3e2b2d8e1fca7d528cd4af6d38bfea49743aeab6788cdbe4ba944786de178263",
+      "carrier_receipt_prefix": "NATIVE_ARM64_EARLY_LOADER",
+      "payload_staging": "target_app_cache",
+      "roles": {
+        "carrier": "a9tas_native_arm64_early_loader_v1",
+        "controller": "a9tas_native_arm64_g4_input_action_controller_v1",
+        "observer": "a9tas_native_arm64_g8_profile_physics_interval_readonly_observer_v1",
+        "payload": "liba9tas_g4_multi_hook_runtime_v1.so",
+        "practice_probe": "a9tas_practice_mode_readonly_probe_arm64_v1",
+        "profile_autogen": "a9tas_arm64_profile_autogen_v1"
+      },
+      "artifacts": [
+        {
+          "asset": "runtime/a9tas_native_arm64_early_loader_v1",
+          "device_name": "a9tas_native_arm64_early_loader_v1",
+          "mode": "0700",
+          "sha256": "11bb7437c3ad64f0c74c52bea137417c8c491b769626d470c07b8e750a3fbefc"
+        },
+        {
+          "asset": "runtime/a9tas_native_arm64_g4_input_action_controller_v1",
+          "device_name": "a9tas_native_arm64_g4_input_action_controller_v1",
+          "mode": "0700",
+          "sha256": "934b9ca19a6988cacf35838f49a30ba7359e149307c524bc05bd694428142b4e"
+        },
+        {
+          "asset": "runtime/a9tas_native_arm64_g8_profile_physics_interval_readonly_observer_v1",
+          "device_name": "a9tas_native_arm64_g8_profile_physics_interval_readonly_observer_v1",
+          "mode": "0700",
+          "sha256": "86b2b9270bb8d698daead270e215c3b530d731667e5fc1e2a7222c18873160c2"
+        },
+        {
+          "asset": "runtime/liba9tas_g4_multi_hook_runtime_v1.so",
+          "device_name": "liba9tas_g4_multi_hook_runtime_v1.so",
+          "mode": "0644",
+          "sha256": "c920ccec61ea9aa1f7889a88b8b5df8a31b57b5a745d8a776cf15c6bd5d2b023"
+        },
+        {
+          "asset": "runtime/a9tas_practice_mode_readonly_probe_arm64_v1",
+          "device_name": "a9tas_practice_mode_readonly_probe_arm64_v1",
+          "mode": "0700",
+          "sha256": "b45b47284bf9926552b2b1583445e4721d03e7e44813c8c5dfef46f49fea4e4d"
+        },
+        {
+          "asset": "runtime/a9tas_arm64_profile_autogen_v1",
+          "device_name": "a9tas_arm64_profile_autogen_v1",
+          "mode": "0700",
+          "sha256": "48a939c0bf530959d2adc5c43ec5e1d468ed8213099971e7ba2aa04d10fb8064"
+        }
+      ]
+    }
+  ]
+}
