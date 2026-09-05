@@ -655,20 +655,16 @@ def main() -> int:
     service_source = sources["TasForegroundService.java"]
     overlay_checkpoint = java_block(
         service_source, "private void requestOverlayCheckpoint()")
-    require("SessionOrchestrator.checkpointAtNextClosedTick(this)" in
-                    overlay_checkpoint and
-            "exactCheckpointActive.compareAndSet(false, true)" in
-                    overlay_checkpoint and
-            "checkpointRequested.set(true)" in overlay_checkpoint and
-            "游戏已暂停" in overlay_checkpoint,
-            "current-segment save must prefer an exact closed-Tick boundary "
-            "and retain an already-paused fallback")
+    require("checkpointAtNextClosedTick" not in overlay_checkpoint and
+            "checkpointRequested.compareAndSet(false, true)" in overlay_checkpoint and
+            "不会取消暂停" in overlay_checkpoint,
+            "save must seal existing ticks without requesting another Tick or ESC")
     observer_source = java_block(
         service_source, "private SessionOrchestrator.OperationObserver observer(String kind)")
     require("checkpointRequested.get()" in observer_source and
-            "!exactCheckpointActive.get()" in observer_source and
+            "boolean checkpointRequested()" in observer_source and
             'getBoolean("record_pause_interrupt", true)' in observer_source,
-            "exact checkpoint ownership must exclude the progress-stall fallback")
+            "explicit saves and automatic pause saves must remain independent")
     exact_checkpoint = java_block(orchestrator,
                                   "static boolean checkpointAtNextClosedTick(Context context)")
     for token in ('"checkpoint-pause"', '"G4_ACTION action=29 "',
@@ -707,10 +703,9 @@ def main() -> int:
         require(token in orchestrator,
                 f"Android atomic replay/record handoff contract missing: {token}")
     require('"branch".equals(kind)' in overlay_checkpoint and
-            'preferences.getBoolean("branch_pending_continuous", false)' in
-                    overlay_checkpoint and
+            '"record".equals(kind)' in overlay_checkpoint and
             "checkpointRequested.compareAndSet(false, true)" in overlay_checkpoint,
-            "paused continuous branch must seal its last closed Tick without a second root waiter")
+            "ordinary and continuous recordings must save without a second root waiter")
     payload_source = (ROOT / "src" / "payload_g4_multi_hook_runtime_v1.cpp").read_text(
         "utf-8")
     active_retry_queue = payload_source[

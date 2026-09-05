@@ -54,13 +54,9 @@ public final class TasForegroundService extends Service {
     private final Object operationLock = new Object();
     private final AtomicBoolean operationActive = new AtomicBoolean(false);
     private final AtomicBoolean cancelRequested = new AtomicBoolean(false);
-    // One-shot fallback for a game that was already paused before an exact
-    // dispatcher-boundary checkpoint could be requested. This remains separate
-    // from the persistent "save whenever gameplay pauses" preference.
+    // Explicitly save the existing closed prefix; never request another Tick.
     private final AtomicBoolean checkpointRequested = new AtomicBoolean(false);
-    // While true, the native dispatcher-boundary transaction owns checkpoint
-    // detection. The older progress-stall fallback must not race it.
-    private final AtomicBoolean exactCheckpointActive = new AtomicBoolean(false);
+    private volatile boolean destroyed;
     // One-shot request to convert the currently replayed immutable prefix into
     // a branch point at its last complete authoritative tick.
     private final AtomicBoolean replayInterruptRequested = new AtomicBoolean(false);
@@ -228,6 +224,7 @@ public final class TasForegroundService extends Service {
     private interface ServiceOperation { void run() throws Exception; }
 
     private void runExclusive(String kind, ServiceOperation operation) {
+        if (destroyed) return;
         if (!operationActive.compareAndSet(false, true)) {
             // A double tap is not a session failure and must not overwrite the
             // state/progress of the operation that is actually running.
@@ -237,7 +234,6 @@ public final class TasForegroundService extends Service {
         }
         cancelRequested.set(false);
         checkpointRequested.set(false);
-        exactCheckpointActive.set(false);
         replayInterruptRequested.set(false);
         getSharedPreferences("session", MODE_PRIVATE).edit()
                 .putBoolean("operation_active", true)
@@ -253,14 +249,15 @@ public final class TasForegroundService extends Service {
             } catch (Exception error) {
                 reportFailure("操作", error);
             } finally {
+                if (destroyed && liveInstance != null && liveInstance != this) return;
                 getSharedPreferences("session", MODE_PRIVATE).edit()
                         .putBoolean("operation_active", false)
                         .putBoolean("cancel_pending", false).apply();
                 operationActive.set(false);
                 cancelRequested.set(false);
                 checkpointRequested.set(false);
-                exactCheckpointActive.set(false);
                 replayInterruptRequested.set(false);
+                if (destroyed) return;
                 if (stopAfterOperation) {
                     stopAfterOperation = false;
                     branchAfterWaitingCancellation = false;
@@ -295,10 +292,16 @@ public final class TasForegroundService extends Service {
                 // initial "record" path made mid-branch checkpoints wait until
                 // race end instead of following the brush-lap workflow.
                 return ("record".equals(kind) || "branch".equals(kind)) &&
-                        !exactCheckpointActive.get() &&
                         (checkpointRequested.get() ||
                          getSharedPreferences("session", MODE_PRIVATE)
                          .getBoolean("record_pause_interrupt", true));
+            }
+            @Override public boolean checkpointRequested() {
+                return checkpointRequested.get();
+            }
+            @Override public void onSaveStage(String message) {
+                setState("branch".equals(kind) ? "BRANCH_SAVING" : "CHECKPOINT_SAVING", message);
+                updateNotification(message, false);
             }
             @Override public long progressStallTimeoutMillis() {
                 return getSharedPreferences("session", MODE_PRIVATE)
@@ -388,55 +391,14 @@ public final class TasForegroundService extends Service {
                     "当前没有可封存的录制").apply();
             return;
         }
-        // A continuous branch already owns one native Tick timeline and the
-        // game is paused by the user at this point. Asking it to produce a new
-        // boundary cannot succeed while paused and used to hold RootShell for
-        // roughly ten seconds before falling back. Seal the last completely
-        // published Tick directly; the native exporter excludes any open Tick.
-        if ("branch".equals(kind) &&
-                preferences.getBoolean("branch_pending_continuous", false)) {
-            if (!checkpointRequested.compareAndSet(false, true)) {
-                preferences.edit().putString("overlay_feedback",
-                        "保存请求已经在处理中").apply();
-                return;
-            }
+        if (!checkpointRequested.compareAndSet(false, true)) {
             preferences.edit().putString("overlay_feedback",
-                    "正在保存最后一个完整 Tick").apply();
-            updateNotification("游戏保持暂停 · 正在保存", true);
-            return;
-        }
-        if (!exactCheckpointActive.compareAndSet(false, true)) {
-            preferences.edit().putString("overlay_feedback",
-                    "精确保存请求已经在处理中").apply();
+                    "保存请求已经在处理中").apply();
             return;
         }
         preferences.edit().putString("overlay_feedback",
-                "正在等待下一个完整 Tick · 将自动暂停并保存").apply();
-        updateNotification("正在对齐完整 Tick 并保存", true);
-        new Thread(() -> {
-            try {
-                boolean exact = SessionOrchestrator.checkpointAtNextClosedTick(this);
-                if (exact) {
-                    preferences.edit().putString("overlay_feedback",
-                            "已在完整 Tick 边界暂停 · 正在导出录像").apply();
-                } else {
-                    // An already-paused game cannot produce the next boundary.
-                    // Fall back to sealing its last fully closed Tick.
-                    exactCheckpointActive.set(false);
-                    checkpointRequested.set(true);
-                    preferences.edit().putString("overlay_feedback",
-                            "游戏已暂停 · 正在保存最后一个完整 Tick").apply();
-                    updateNotification("游戏保持暂停 · 正在保存", true);
-                    return;
-                }
-            } catch (Exception error) {
-                preferences.edit().putString("overlay_feedback",
-                        "精确保存失败 · " + (error.getMessage() == null ?
-                                error.getClass().getSimpleName() : error.getMessage())).apply();
-            } finally {
-                exactCheckpointActive.set(false);
-            }
-        }, "a9tas-exact-checkpoint").start();
+                "正在封存已完成的 Tick · 不会取消暂停").apply();
+        updateNotification("正在保存已完成部分", true);
     }
 
     private void requestCheckpointBranch() {
@@ -1371,6 +1333,7 @@ public final class TasForegroundService extends Service {
     }
 
     private void setState(String state, String detail) {
+        if (destroyed) return;
         getSharedPreferences("session", MODE_PRIVATE).edit()
                 .putString("state", state).putString("detail", detail)
                 .putLong("updated", System.currentTimeMillis()).apply();
@@ -1432,6 +1395,7 @@ public final class TasForegroundService extends Service {
     private void updateNotification(String detail) { updateNotification(detail, false); }
 
     private void updateNotification(String detail, boolean cancellable) {
+        if (destroyed) return;
         Notification.Builder builder = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(this, CHANNEL_ID) : new Notification.Builder(this);
         getSystemService(NotificationManager.class).notify(NOTIFICATION_ID,
@@ -1441,9 +1405,21 @@ public final class TasForegroundService extends Service {
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override public void onDestroy() {
+        destroyed = true;
+        cancelRequested.set(true);
         if (overlayController != null) overlayController.hide();
-        liveInstance = null;
-        RootShell.closePersistent();
+        if (liveInstance == this) liveInstance = null;
+        new Thread(() -> {
+            File signal = activeCancellationSignal;
+            if (signal != null) try { publishCancellationSignal(signal); }
+            catch (IOException error) {
+                DiagnosticBundle.recordFailure(this, "SERVICE_CANCEL", error);
+            }
+            synchronized (operationLock) {
+                // A replacement service may already be using the shared shell.
+                RootShell.closePersistentIf(() -> liveInstance == null);
+            }
+        }, "a9tas-service-cleanup").start();
         super.onDestroy();
     }
 }

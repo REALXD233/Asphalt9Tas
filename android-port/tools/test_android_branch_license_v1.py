@@ -92,7 +92,7 @@ class AndroidBranchLicenseTest(unittest.TestCase):
                       "materializeReplaySource", "MAX_FRAMES = 7200"):
             self.assertIn(token, source)
 
-    def test_branch_is_replay_pause_then_record_then_splice(self) -> None:
+    def test_branch_adopts_one_native_timeline(self) -> None:
         service = (JAVA / "TasForegroundService.java").read_text("utf-8")
         orchestrator = (JAVA / "SessionOrchestrator.java").read_text("utf-8")
         # The production entry now carries continuous/recovery/foreground
@@ -104,7 +104,8 @@ class AndroidBranchLicenseTest(unittest.TestCase):
         self.assertLess(method.index("replaySelected"),
                         method.index("recordFromPausedReplay"))
         self.assertLess(method.index("recordFromPausedReplay"),
-                        method.index("A9TasBranchEditor.splice"))
+                        method.index("A9TasBranchEditor.adoptContinuous"))
+        self.assertNotIn("A9TasBranchEditor.splice", method)
         self.assertIn('putBoolean("replay_pause_at_target", true)', method)
         self.assertIn("Keep the old archive immutable", method)
         for token in ("ACTION_CHECKPOINT_BRANCH", "requestCheckpointBranch",

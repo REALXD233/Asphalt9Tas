@@ -60,6 +60,12 @@ if ($SigningMode -eq 'Release') {
 }
 
 $archiveSelftest = Join-Path $project 'app/src/main/assets/selftest/a9tas1-synthetic.a9tas'
+$runtimeManifest = Join-Path $project 'app/src/main/assets/runtime/manifest.json'
+if (-not (Test-Path -LiteralPath $runtimeManifest -PathType Leaf)) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $runtimeManifest) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $root 'config/runtime-manifest-template.json') `
+        -Destination $runtimeManifest
+}
 & $identityProbeBuild | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Android identity probe build failed' }
 & $practiceProbeBuild | Out-Host
@@ -193,25 +199,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Java class archive failed' }
 if ($LASTEXITCODE -ne 0) { throw 'd8 failed' }
 & $jar uf $unsignedApk -C $dex classes.dex
 if ($LASTEXITCODE -ne 0) { throw 'classes.dex packaging failed' }
-$assetPackageRoot = Join-Path $project 'app/src/main'
-if ($NoBuiltInProfiles) {
-    # Package all normal assets, including the ARM64 signature resolver, but
-    # replace the built-in Profile set with an intentionally empty registry.
-    # Imported/on-device-generated Profiles remain supported at runtime.
-    $assetPackageRoot = Join-Path $work 'asset-package-root'
-    $stagedAssets = Join-Path $assetPackageRoot 'assets'
-    New-Item -ItemType Directory -Force -Path $stagedAssets | Out-Null
-    Get-ChildItem -LiteralPath (Join-Path $project 'app/src/main/assets') | Where-Object {
-        $_.Name -ne 'profiles'
-    } | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination $stagedAssets -Recurse -Force
-    }
-    $stagedProfiles = Join-Path $stagedAssets 'profiles'
-    New-Item -ItemType Directory -Force -Path $stagedProfiles | Out-Null
-    [IO.File]::WriteAllText((Join-Path $stagedProfiles 'registry.json'),
-        "{`n  `"schema`": 1,`n  `"profiles`": []`n}`n",
-        [Text.UTF8Encoding]::new($false))
-}
+$stageArgs = @('-B', (Join-Path $root 'tools/stage_android_assets_v1.py'),
+    (Join-Path $project 'app/src/main/assets'), $work)
+if ($NoBuiltInProfiles) { $stageArgs += '--no-profiles' }
+$assetPackageRoot = & python @stageArgs
+if ($LASTEXITCODE -ne 0) { throw 'Manifest-based asset staging failed' }
 & $jar uf $unsignedApk -C $assetPackageRoot assets
 if ($LASTEXITCODE -ne 0) { throw 'asset packaging failed' }
 

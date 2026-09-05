@@ -33,7 +33,9 @@ Asphalt9Tas 是面向 Android 版《狂野飙车 9》的研究型 TAS 工具。�
 
 构建需要 Windows、PowerShell、Python、Android SDK 35、JDK 17 和 Android NDK r27d。默认脚本从 `android-port/.toolchains` 查找便携工具链；该目录不进入版本控制。
 
-APK 内使用的 native runtime 属于构建产物，不进入 Git 历史；主构建脚本会先编译并同步这些文件到 Android assets。
+APK 内使用的 native runtime 属于构建产物，不进入 Git 历史；配置模板保存在 `android-port/config/runtime-manifest-template.json`，构建时生成清单并仅打包清单引用的文件。
+
+原生构建还需要外部的参考游戏 ELF、雷电 libc 和历史实测基线文件，克隆仓库不会自动获得这些输入。准备方式和离线测试见 [源码构建说明](android-port/SOURCE_BUILD.md)。此前说明未列出这些依赖，现已更正。
 
 Release 签名必须使用源码目录之外的 keystore，并通过环境变量提供密码：
 

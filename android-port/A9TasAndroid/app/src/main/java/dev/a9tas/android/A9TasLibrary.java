@@ -24,6 +24,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -33,6 +34,36 @@ final class A9TasLibrary {
     private static final byte[] MAGIC = {'A','9','T','A','S','1',0,0};
     private static final int VERSION = 1;
     private static final int FLAGS = 7;
+    // Listing acceleration only. Playback always verifies the selected file.
+    private static final LinkedHashMap<String, CachedEntry> LIST_CACHE =
+            new LinkedHashMap<>(64, 0.75f, true);
+    private static final class CachedEntry {
+        final Entry entry;
+        final long size, modified;
+        CachedEntry(Entry entry) {
+            this.entry = entry;
+            size = entry.file.length();
+            modified = entry.file.lastModified();
+        }
+    }
+
+    private static Entry remember(Entry entry) {
+        synchronized (LIST_CACHE) {
+            LIST_CACHE.put(entry.file.getAbsolutePath(), new CachedEntry(entry));
+            while (LIST_CACHE.size() > 64)
+                LIST_CACHE.remove(LIST_CACHE.keySet().iterator().next());
+        }
+        return entry;
+    }
+
+    private static Entry readEntry(File file, boolean allowListingCache) throws Exception {
+        if (allowListingCache) synchronized (LIST_CACHE) {
+            CachedEntry cached = LIST_CACHE.get(file.getAbsolutePath());
+            if (cached != null && cached.size == file.length() &&
+                    cached.modified == file.lastModified()) return cached.entry;
+        }
+        return remember(new Entry(file, A9TasArchive.inspect(file), sha256(file)));
+    }
 
     static final class Metadata {
         final String title;
@@ -199,8 +230,7 @@ final class A9TasLibrary {
         if (!rawRoot.equals(raw.getParentFile()) ||
                 !raw.getName().matches("recording-[0-9]+-[0-9]+[.]a9g4r2") || !raw.isFile())
             throw new IOException("raw recording is outside the private library");
-        if (expectedSourceSha == null || !expectedSourceSha.matches("[0-9a-f]{64}") ||
-                !expectedSourceSha.equals(sha256(raw)))
+        if (expectedSourceSha == null || !expectedSourceSha.matches("[0-9a-f]{64}"))
             throw new IOException("raw recording identity changed before packaging");
 
         A9TasArchive.SourceSummary sourceSummary = A9TasArchive.inspectSource(raw);
@@ -245,18 +275,28 @@ final class A9TasLibrary {
             throw new IOException("A9TAS1 header size mismatch");
 
         try {
+            MessageDigest archiveDigest = MessageDigest.getInstance("SHA-256");
+            MessageDigest sourceDigest = MessageDigest.getInstance("SHA-256");
             try (FileOutputStream destination = new FileOutputStream(pending, false);
                  InputStream input = new FileInputStream(raw)) {
                 destination.write(header.array());
                 destination.write(manifestBytes);
+                archiveDigest.update(header.array());
+                archiveDigest.update(manifestBytes);
                 byte[] buffer = new byte[64 * 1024];
                 int count;
                 while ((count = input.read(buffer)) != -1) {
-                    if (count != 0) destination.write(buffer, 0, count);
+                    if (count != 0) {
+                        destination.write(buffer, 0, count);
+                        sourceDigest.update(buffer, 0, count);
+                        archiveDigest.update(buffer, 0, count);
+                    }
                 }
                 destination.flush();
                 destination.getFD().sync();
             }
+            if (!MessageDigest.isEqual(recordingHash, sourceDigest.digest()))
+                throw new IOException("raw recording identity changed during packaging");
             A9TasArchive.Summary verified = A9TasArchive.inspect(pending);
             if (verified.frameCount != sourceSummary.frameCount ||
                     verified.intervalCount != sourceSummary.intervalCount ||
@@ -267,7 +307,7 @@ final class A9TasLibrary {
             // renameTo within the same private directory preserves the bytes
             // already verified above.  Re-parsing every frame after publication
             // only duplicated I/O on slow Android storage.
-            return new Entry(output, verified, sha256(output));
+            return remember(new Entry(output, verified, hex(archiveDigest.digest())));
         } catch (Exception error) {
             if (pending.exists()) pending.delete();
             throw error;
@@ -288,8 +328,7 @@ final class A9TasLibrary {
                 !draft.getName().matches("attempt-[0-9]+-[0-9]+[.]a9g4r2") ||
                 !draft.isFile())
             throw new IOException("checkpoint is outside the private draft directory");
-        if (expectedSourceSha == null || !expectedSourceSha.matches("[0-9a-f]{64}") ||
-                !expectedSourceSha.equals(sha256(draft)))
+        if (expectedSourceSha == null || !expectedSourceSha.matches("[0-9a-f]{64}"))
             throw new IOException("checkpoint identity changed before promotion");
         A9TasArchive.SourceSummary summary = A9TasArchive.inspectSource(draft);
         if (expectedTicks < 1 || summary.frameCount != expectedTicks)
@@ -319,10 +358,11 @@ final class A9TasLibrary {
         Set<String> ids = new HashSet<>();
         for (File file : files) {
             try {
-                A9TasArchive.Summary summary = A9TasArchive.inspect(file);
+                Entry entry = readEntry(file, true);
+                A9TasArchive.Summary summary = entry.summary;
                 String id = summary.manifest.getString("recording_id");
                 if (!ids.add(id)) throw new IOException("library.duplicate_recording_id");
-                valid.add(new Entry(file, summary, sha256(file)));
+                valid.add(entry);
             } catch (Exception error) {
                 invalid.add(file.getName() + ":" +
                         (error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage()));
@@ -507,7 +547,7 @@ final class A9TasLibrary {
         if (!entry.archiveSha256.equals(sha256(archive)))
             throw new IOException("recording changed before rename");
 
-        A9TasArchive.Summary before = A9TasArchive.inspect(archive);
+        A9TasArchive.Summary before = entry.summary;
         if (!before.manifest.getString("recording_id").equals(
                 manifest.getString("recording_id")))
             throw new IOException("recording id cannot be edited");
@@ -549,10 +589,13 @@ final class A9TasLibrary {
         if (pending.exists() && !pending.delete())
             throw new IOException("stale metadata transaction cannot be cleared");
         try {
+            MessageDigest archiveDigest = MessageDigest.getInstance("SHA-256");
             try (RandomAccessFile source = new RandomAccessFile(archive, "r");
                  FileOutputStream destination = new FileOutputStream(pending, false)) {
                 destination.write(header.array());
                 destination.write(manifestBytes);
+                archiveDigest.update(header.array());
+                archiveDigest.update(manifestBytes);
                 source.seek(recordingOffset);
                 byte[] buffer = new byte[64 * 1024];
                 long remaining = recordingSize;
@@ -560,6 +603,7 @@ final class A9TasLibrary {
                     int count = source.read(buffer, 0, (int) Math.min(buffer.length, remaining));
                     if (count < 0) throw new IOException("recording ended during metadata edit");
                     destination.write(buffer, 0, count);
+                    archiveDigest.update(buffer, 0, count);
                     remaining -= count;
                 }
                 destination.flush();
@@ -574,7 +618,7 @@ final class A9TasLibrary {
                     before.frameCount != verified.frameCount)
                 throw new IOException("edited archive identity mismatch");
             atomicReplace(pending, archive);
-            Entry result = new Entry(archive, A9TasArchive.inspect(archive), sha256(archive));
+            Entry result = remember(new Entry(archive, verified, hex(archiveDigest.digest())));
             if (!A9TasArchive.canonical(manifest).equals(
                         A9TasArchive.canonical(result.summary.manifest)) ||
                     !before.recordingSha256.equals(result.summary.recordingSha256))
@@ -788,11 +832,7 @@ final class A9TasLibrary {
                 preferences.getString("latest_archive_sha", ""));
         if (selectedPath.isEmpty() || !selectedSha.matches("[0-9a-f]{64}"))
             throw new IOException("select a verified A9TAS1 recording first");
-        File selected = new File(selectedPath).getCanonicalFile();
-        for (Entry entry : list(context).valid)
-            if (entry.file.getCanonicalFile().equals(selected) &&
-                    entry.archiveSha256.equals(selectedSha)) return entry;
-        throw new IOException("selected A9TAS1 recording is no longer valid");
+        return verified(context, selectedPath, selectedSha);
     }
 
     static Entry verified(Context context, String archivePath,
@@ -801,9 +841,12 @@ final class A9TasLibrary {
                 archiveSha256 == null || !archiveSha256.matches("[0-9a-f]{64}"))
             throw new IOException("resident replay archive identity is incomplete");
         File requested = new File(archivePath).getCanonicalFile();
-        for (Entry entry : list(context).valid)
-            if (entry.file.getCanonicalFile().equals(requested) &&
-                    entry.archiveSha256.equals(archiveSha256)) return entry;
+        File directory = new File(context.getFilesDir(), "library").getCanonicalFile();
+        if (!directory.equals(requested.getParentFile()) ||
+                !requested.getName().matches("[0-9a-f-]{36}[.]a9tas") || !requested.isFile())
+            throw new IOException("recording is outside the private library");
+        Entry entry = readEntry(requested, false);
+        if (entry.archiveSha256.equals(archiveSha256)) return entry;
         throw new IOException("resident replay archive is no longer valid");
     }
 
@@ -873,6 +916,16 @@ final class A9TasLibrary {
         for (int index = 0; index < result.length; ++index)
             result[index] = (byte) Integer.parseInt(value.substring(index * 2, index * 2 + 2), 16);
         return result;
+    }
+
+    private static String hex(byte[] bytes) {
+        char[] out = new char[bytes.length * 2];
+        final char[] digits = "0123456789abcdef".toCharArray();
+        for (int i = 0; i < bytes.length; ++i) {
+            out[i * 2] = digits[(bytes[i] & 255) >>> 4];
+            out[i * 2 + 1] = digits[bytes[i] & 15];
+        }
+        return new String(out);
     }
 
     private static boolean safePackage(String value) {

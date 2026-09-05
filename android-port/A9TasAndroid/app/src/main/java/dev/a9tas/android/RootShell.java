@@ -141,6 +141,11 @@ final class RootShell {
         abortPersistent();
     }
 
+    /** Evaluate ownership after acquiring the lock, not before a pending command. */
+    static synchronized void closePersistentIf(java.util.function.BooleanSupplier ownerGone) {
+        if (ownerGone.getAsBoolean()) abortPersistent();
+    }
+
     /**
      * A timed-out root command may still own the shell's foreground execution.
      * Writing "exit" to that shell before destroying it can itself block on
