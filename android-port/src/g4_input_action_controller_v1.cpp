@@ -11,6 +11,7 @@
 #include "g4_multi_hook_runtime_v1.h"
 #include "g8_runtime_build_profile_v1.h"
 #include "race_lifecycle_object_resolver_v1.h"
+#include "status_observation_policy_v1.h"
 #include "vehicle_state_resolver_v1.h"
 #if defined(A9TAS_G4_NATIVE_ARM64_CONTROLLER)
 #include "native_arm64_g4_payload_resolver_v1.h"
@@ -21,6 +22,8 @@
 #include <cstddef>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
+#include <memory>
 #include <limits>
 
 namespace g4_controller_v1 {
@@ -577,7 +580,8 @@ bool ReadReplayBundle(const char* path, std::uint32_t expected_frames,
       header.frame_count == 0 || header.frame_count > protocol::kMaximumFrames ||
       header.interval_count == 0 ||
       header.interval_count > protocol::kMaximumIntervalSamples ||
-      header.fixed_delta_us != 16667 ||
+      header.fixed_delta_us < recording::kMinimumFixedIntervalUs ||
+      header.fixed_delta_us > recording::kMaximumFixedIntervalUs ||
       header.session_id == 0 || header.generation == 0 ||
       header.reserved0 != 0 ||
       std::memcmp(header.reserved, zero.reserved, sizeof(header.reserved)) != 0)
@@ -686,7 +690,8 @@ bool ResolvePayloadLocator(const ElfImage& elf, pid_t pid,
 #endif
 
 bool ResolveArtifacts(pid_t pid, std::uint64_t start_ticks,
-                      std::uintptr_t requested_game_base, Runtime* runtime) {
+                      std::uintptr_t requested_game_base, Runtime* runtime,
+                      bool status_only) {
   if (runtime == nullptr || !IsAlive(pid, start_ticks) ||
       TracerPid(pid) != 0 || requested_game_base == 0)
     return false;
@@ -715,7 +720,8 @@ bool ResolveArtifacts(pid_t pid, std::uint64_t start_ticks,
   // immutable executable mapping.  The shared ARM64 remote-call layer also
   // supports LR=0 and accepts only the exact SIGSEGV/SEGV_MAPERR return at
   // PC=0, so absence of a BRK is not an artifact-resolution failure.
-  if (!a9tas::native_arm64_immutable_trap_resolver_v1::Resolve(pid,&trap))
+  if (!status_only &&
+      !a9tas::native_arm64_immutable_trap_resolver_v1::Resolve(pid,&trap))
     trap={};
   runtime->call.payload_base=layout.load_bias;
   runtime->call.control=layout.control;
@@ -870,6 +876,14 @@ bool ResolveArtifacts(pid_t pid, std::uint64_t start_ticks,
       game->offset != 0 || !game->readable || game->writable ||
       game->path.find("libAsphalt9.so") == std::string::npos)
     return false;
+  // Only the read-only status command may reuse the installed build binding.
+  // PID/start-time, payload identity and the live game mapping are checked
+  // above; RemoteBuildProfileMatches and TargetsMatch are still checked below.
+  // Rehashing the entire game ELF on every progress poll is not a TAS clock.
+  if (status_only) {
+    runtime->call.game_base = requested_game_base;
+    return true;
+  }
   FileImage game_file{};
   const std::string expected_native_sha = HexBytes(
       g_build_profile.core.native_sha256,
@@ -1026,6 +1040,7 @@ bool ResolveInstallObjects(pid_t pid, std::uintptr_t outer_owner,
       adjustment == kStepOptionsThisAdjustment &&
       outer_owner >= static_cast<std::uintptr_t>(-adjustment);
   if (!interval) {
+    std::fprintf(stderr, "G4_OBJECT_DIAG stale_interval_owner=0x%" PRIxPTR "\n", outer_owner);
     close(mem);
     return false;
   }
@@ -1307,7 +1322,8 @@ bool StaticControlValid(const protocol::Control& control,
            static_cast<std::uint32_t>(protocol::RunMode::kRecord) &&
        control.mode !=
            static_cast<std::uint32_t>(protocol::RunMode::kReplay)) ||
-      control.fixed_delta_us != 16667 ||
+      control.fixed_delta_us < recording::kMinimumFixedIntervalUs ||
+      control.fixed_delta_us > recording::kMaximumFixedIntervalUs ||
       control.expected_main_object == 0 ||
       control.expected_interval_owner == 0 ||
       control.expected_interval_owner_vptr !=
@@ -2370,6 +2386,15 @@ int FailG4(pid_t pid, g2::FrozenSet* frozen, bool uncertain,
 
 int main(int argc, char** argv) {
   using namespace g4_controller_v1;
+  std::uint64_t record_delta_us = 16667;
+  if (const char* selected = std::getenv("A9TAS_RECORD_DELTA_US")) {
+    if (!g2::ParseNumber(selected, 10, &record_delta_us) ||
+        (record_delta_us != 16667 && record_delta_us != 8333 &&
+         record_delta_us != 6944)) {
+      std::fprintf(stderr, "invalid record timestep; expected 16667/8333/6944 us\n");
+      return 2;
+    }
+  }
   Action action{};
   if (argc < 2 || !ParseAction(argv[1], &action)) {
     std::fprintf(stderr,
@@ -2457,7 +2482,8 @@ int main(int argc, char** argv) {
     return 15;
   }
   Runtime runtime{};
-  if (!ResolveArtifacts(pid, ticks, game_base, &runtime))
+  if (!ResolveArtifacts(pid, ticks, game_base, &runtime,
+                        action == Action::kStatus))
     return FailG4(pid, nullptr, false, "artifact_runtime", 3);
 
   char mem_path[64]{};
@@ -2487,7 +2513,8 @@ int main(int argc, char** argv) {
   if (action == Action::kWaitForPendingActivation) {
     protocol::Control queued_control{};
     protocol::Evidence queued_evidence{};
-    bridge::StateV1 queued_state{};
+    auto queued_state_storage = std::make_unique<bridge::StateV1>();
+    auto& queued_state = *queued_state_storage;
     const bool receipt_read =
         ReadReceipt(mem, runtime, &queued_control, &queued_evidence,
                     &queued_state);
@@ -2540,7 +2567,8 @@ int main(int argc, char** argv) {
     bool cancelled = false;
     protocol::Control observed_control = queued_control;
     protocol::Evidence observed_evidence = queued_evidence;
-    bridge::StateV1 observed_state = queued_state;
+    auto observed_storage = std::make_unique<bridge::StateV1>(queued_state);
+    auto& observed_state = *observed_storage;
     if (queued && !activated) {
       // Five minutes is a user-facing wait for Retry, not a wall-clock guess
       // about the game.  Each sample reads only the fixed payload receipt.
@@ -2615,7 +2643,8 @@ int main(int argc, char** argv) {
   if (action == Action::kWaitForRetryCountdownAndPause) {
     protocol::Control control{};
     protocol::Evidence evidence{};
-    bridge::StateV1 state{};
+    auto state_storage = std::make_unique<bridge::StateV1>();
+    auto& state = *state_storage;
     std::uint32_t receipt_reject = 0;
     const bool archived_ready =
         ReadReceipt(mem, runtime, &control, &evidence, &state) &&
@@ -2710,7 +2739,8 @@ int main(int argc, char** argv) {
   if (action == Action::kResumeStoppedAtPauseMenu) {
     protocol::Control control{};
     protocol::Evidence evidence{};
-    bridge::StateV1 state{};
+    auto state_storage = std::make_unique<bridge::StateV1>();
+    auto& state = *state_storage;
     std::uint32_t receipt_reject = 0;
     const bool terminal = ReadReceipt(mem, runtime, &control, &evidence, &state) &&
         StaticControlValid(control, runtime, limit) &&
@@ -2781,7 +2811,8 @@ int main(int argc, char** argv) {
     constexpr std::uint32_t kProgressPollCount = 3000;
     protocol::Control control{};
     protocol::Evidence evidence{};
-    bridge::StateV1 state{};
+    auto state_storage = std::make_unique<bridge::StateV1>();
+    auto& state = *state_storage;
     bool reached = false;
     for (std::uint32_t poll = 0; poll < kProgressPollCount; ++poll) {
       if (!ReadReceipt(mem, runtime, &control, &evidence, &state)) break;
@@ -2835,7 +2866,10 @@ int main(int argc, char** argv) {
   if (action == Action::kPauseProbe) {
     protocol::Control before_control{}, after_control{};
     protocol::Evidence before_evidence{}, after_evidence{};
-    bridge::StateV1 before_state{}, after_state{};
+    auto before_storage = std::make_unique<bridge::StateV1>();
+    auto after_storage = std::make_unique<bridge::StateV1>();
+    auto& before_state = *before_storage;
+    auto& after_state = *after_storage;
     const bool before_read = ReadReceipt(
         mem, runtime, &before_control, &before_evidence, &before_state);
     // One controller process owns both samples. This is a read-only wall-clock
@@ -2974,7 +3008,8 @@ int main(int argc, char** argv) {
   if (action == Action::kCheckpointAtNextClosedTick) {
     protocol::Control checkpoint_control{};
     protocol::Evidence checkpoint_evidence{};
-    bridge::StateV1 checkpoint_state{};
+    auto checkpoint_state_storage = std::make_unique<bridge::StateV1>();
+    auto& checkpoint_state = *checkpoint_state_storage;
     const bool active_record =
         ReadCompletionReceipt(mem, runtime, &checkpoint_control,
                               &checkpoint_evidence) &&
@@ -3016,7 +3051,8 @@ int main(int argc, char** argv) {
     for (std::uint32_t poll = 0; poll < kCheckpointPollCount; ++poll) {
       protocol::Control waiting_control{};
       protocol::Evidence waiting_evidence{};
-      bridge::StateV1 waiting_state{};
+      auto waiting_state_storage = std::make_unique<bridge::StateV1>();
+      auto& waiting_state = *waiting_state_storage;
       if (ReadCompletionReceipt(mem, runtime, &waiting_control,
                                 &waiting_evidence) &&
           g2::ReadAt(mem, runtime.runtime, &waiting_state)) {
@@ -3345,7 +3381,8 @@ int main(int argc, char** argv) {
       action == Action::kWaitForCompletionAndStop) {
     protocol::Control control{};
     protocol::Evidence evidence{};
-    bridge::StateV1 state{};
+    auto state_storage = std::make_unique<bridge::StateV1>();
+    auto& state = *state_storage;
     std::uint32_t receipt_reject = 0;
     const bool read = ReadReceipt(mem, runtime, &control, &evidence, &state);
     const bool static_valid =
@@ -3374,16 +3411,19 @@ int main(int argc, char** argv) {
     // Evidence.last_lifecycle_state is intentionally frozen with the sealed
     // recording. The race-owned lifecycle object can also retire immediately
     // after state 9, so the originally bound address is not a durable Retry
-    // observer. First sample that address cheaply; unless it proves state 2,
-    // perform the existing read-only exact-profile countdown resolution and
-    // publish the newly selected object's state. This adds no game hook and no
-    // game-state write, and it keeps natural finish distinct from Retry.
+    // observer. Use the address published by the installed payload: this
+    // standalone status process has not run ResolveInstallObjects, so its
+    // Runtime::lifecycle_state can be zero. Only scan when the bound running
+    // state cannot answer the query (or a sealed race may have retired).
     std::uint32_t live_lifecycle = UINT32_MAX;
     bool live_lifecycle_valid =
-        g2::ReadAt(mem, runtime.lifecycle_state, &live_lifecycle);
+        static_valid && control.lifecycle_state_address != 0 &&
+        g2::ReadAt(mem, control.lifecycle_state_address, &live_lifecycle);
     bool live_lifecycle_relocated = false;
-    if (!live_lifecycle_valid ||
-        live_lifecycle != lifecycle::kCountdownState) {
+    const bool bound_session_active = static_valid && control.enabled == 1u &&
+        control.completed == 0u && evidence.status == protocol::kArmed;
+    if (a9tas::status_observation_v1::ShouldRelocateLifecycle(
+            bound_session_active, live_lifecycle_valid, live_lifecycle)) {
       lifecycle::Resolution current_race{};
       const lifecycle::Profile lifecycle_profile = LifecycleProfile();
       if (lifecycle::ResolveCountdownObject(
@@ -3442,6 +3482,8 @@ int main(int argc, char** argv) {
              " live_lifecycle=%u"
              " live_lifecycle_valid=%d live_lifecycle_relocated=%d"
              " coordinator=%u,%" PRIu64 ",%u,%" PRIu64
+             " fault_context=0x%" PRIx64 " fault_tick=%" PRIu64
+             " coordinator_result=%d coordinator_intervals=%" PRIu64
              " fast_replay=%u,%" PRIu64 ",%" PRIu64
              " target_barrier=%d target_pause=%d target_release=%d target_stop=%d target_resume=%d early_pause=%d cancelled=%d\n",
             complete ? 1 : 0, state.receipt_count,
@@ -3495,7 +3537,11 @@ int main(int argc, char** argv) {
              state.tick.complete,
             state.tick.coordinator.ticks_published,
             static_cast<std::uint32_t>(state.tick.coordinator.tick_phase),
-            state.tick.coordinator.failures, control.replay_speed_factor,
+            state.tick.coordinator.failures,
+            evidence.reserved[0], evidence.last_tick,
+            static_cast<std::int32_t>(state.tick.coordinator.last_result),
+            state.tick.coordinator.physics_interval_calls,
+            control.replay_speed_factor,
             evidence.wrapper_entries[protocol::kLogicDispatcherHook],
             evidence.qualified_events[protocol::kLogicDispatcherHook],
              target_completion_barrier ? 1 : 0,
@@ -3616,7 +3662,8 @@ int main(int argc, char** argv) {
   if (action == Action::kDumpReplayDiagnostic) {
     protocol::Control control{};
     protocol::Evidence evidence{};
-    bridge::StateV1 state{};
+    auto state_storage = std::make_unique<bridge::StateV1>();
+    auto& state = *state_storage;
     const bool valid =
         ReadReceipt(mem, runtime, &control, &evidence, &state) &&
         StaticControlValid(control, runtime, limit) &&
@@ -3763,7 +3810,8 @@ int main(int argc, char** argv) {
   if (action == Action::kDumpRecord) {
     protocol::Control control{};
     protocol::Evidence evidence{};
-    bridge::StateV1 state{};
+    auto state_storage = std::make_unique<bridge::StateV1>();
+    auto& state = *state_storage;
     const bool valid =
         ReadReceipt(mem, runtime, &control, &evidence, &state) &&
         StaticControlValid(control, runtime, limit) &&
@@ -3827,7 +3875,8 @@ int main(int argc, char** argv) {
   if (action == Action::kPassiveStatus) {
     protocol::Control control{};
     protocol::Evidence evidence{};
-    bridge::StateV1 state{};
+    auto state_storage = std::make_unique<bridge::StateV1>();
+    auto& state = *state_storage;
     const bool read = ReadReceipt(mem, runtime, &control, &evidence, &state);
     const bool passive = read && PassiveControlValid(control, runtime) &&
                          PassiveReceiptValid(control, evidence, state) &&
@@ -3939,7 +3988,8 @@ int main(int argc, char** argv) {
   // StepOptions-to-implementation owner binding in one stable snapshot.
   protocol::Control existing{};
   protocol::Evidence existing_evidence{};
-  bridge::StateV1 existing_state{};
+  auto existing_state_storage = std::make_unique<bridge::StateV1>();
+  auto& existing_state = *existing_state_storage;
   bool restoring_passive = false;
   bool archived_bundle_matches = false;
   bool replacing_cancelled_queued_session = false;
@@ -4076,7 +4126,9 @@ int main(int argc, char** argv) {
             &cancelled_queue_predecessor);
     std::uintptr_t resolution_owner = outer_owner;
     std::uintptr_t current_interval = 0;
-    if (rearm_action && !queued_rearm_action) {
+    if ((rearm_action || (action == Action::kArmLifecycleRecord &&
+         receipt_read_for_config && existing_evidence.last_object[protocol::kTickHook] != 0)) &&
+        !queued_rearm_action) {
       current_interval = static_cast<std::uintptr_t>(
           existing_evidence.last_object[protocol::kTickHook]);
       const std::uintptr_t current_vptr = static_cast<std::uintptr_t>(
@@ -4106,6 +4158,8 @@ int main(int argc, char** argv) {
         : receipt_read_for_config &&
               ResolveInstallObjects(pid, resolution_owner, &runtime);
     if (!objects_resolved) {
+      std::fprintf(stderr, "G4_OBJECT_DIAG receipt_read=%u owner=0x%" PRIxPTR "\n",
+                   receipt_read_for_config ? 1u : 0u, resolution_owner);
       close(mem);
       return FailG4(pid, &frozen, false,
                     branch_rearm_action ? "branch_retained_objects"
@@ -4185,7 +4239,8 @@ int main(int argc, char** argv) {
   bool command_ok = false;
   protocol::Control control{};
   protocol::Evidence evidence{};
-  bridge::StateV1 state{};
+  auto state_storage = std::make_unique<bridge::StateV1>();
+  auto& state = *state_storage;
   std::uint64_t guest_return = 0;
   long rip_bias = 0;
   bool guest_called = false;
@@ -4316,7 +4371,12 @@ int main(int argc, char** argv) {
         (action == Action::kArmLifecycleRecord || record_rearm_action)
             ? protocol::CompletionPolicy::kRaceLifecycle
             : protocol::CompletionPolicy::kFixedFrameLimit);
-    control.fixed_delta_us = 16667;
+    // Replay owns its recorded timestep; continuation keeps that same time
+    // domain. Only a fresh recording uses the user's requested frequency.
+    control.fixed_delta_us = replay_action
+        ? replay_bundle.header.fixed_delta_us
+        : branch_rearm_action ? existing.fixed_delta_us
+        : static_cast<std::uint32_t>(record_delta_us);
     control.replay_speed_factor = replay_action
         ? static_cast<std::uint32_t>(replay_speed_raw)
         : 1u;

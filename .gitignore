@@ -40,3 +40,6 @@ android-port/A9TasAndroid/app/src/main/assets/runtime/
 __pycache__/
 *.py[cod]
 *.log
+
+# Local reference checkout, not part of this project's source distribution
+android-port/tools/upstream_src/

@@ -11,7 +11,7 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:paddingStart="20dp"
-        android:paddingTop="28dp"
+        android:paddingTop="20dp"
         android:paddingEnd="20dp"
         android:paddingBottom="40dp">
 
@@ -22,7 +22,7 @@
             android:letterSpacing="-0.02"
             android:text="A9 TAS"
             android:textColor="@color/text_primary"
-            android:textSize="34sp"
+            android:textSize="30sp"
             android:textStyle="bold" />
 
         <TextView
@@ -34,10 +34,17 @@
             android:textSize="15sp" />
 
         <LinearLayout
+            android:id="@+id/pageNavigation"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:orientation="horizontal" />
+
+        <LinearLayout
             style="@style/A9Tas.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="12dp"
             android:orientation="vertical">
 
             <TextView
@@ -54,9 +61,19 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:lineSpacingExtra="3dp"
+                android:maxLines="3"
+                android:ellipsize="end"
                 android:text="尚未扫描游戏"
                 android:textColor="@color/text_primary"
                 android:textSize="17sp" />
+
+            <Button
+                android:id="@+id/statusDetailsButton"
+                style="@style/A9Tas.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="查看状态详情" />
 
             <LinearLayout
                 android:id="@+id/progressContainer"
@@ -311,7 +328,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="快捷操作"
+                android:text="开始刷圈"
                 android:textColor="@color/text_primary"
                 android:textSize="20sp"
                 android:textStyle="bold" />
@@ -320,7 +337,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="启动一次连续刷圈后，直接驾驶即可。Retry 会自动丢弃未保留片段并从 Tick 0 录制下一局。"
+                android:text="开始后直接驾驶。重开时按当前设置准备下一局；需要保留的片段请先保存。"
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp" />
 
@@ -340,6 +357,24 @@
                 android:textColor="@color/text_tertiary"
                 android:textSize="12sp" />
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="新录制逻辑频率（非屏幕 FPS）"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp" />
+            <Spinner
+                android:id="@+id/recordTickRateSpinner"
+                style="@style/A9Tas.Field"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:popupBackground="@color/surface_elevated" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="120/144 为实验选项。仅新录制生效；回放与续录沿用存档步长。24000 Tick 容量在 60/120/144 下约为 400/200/166 秒；高频更耗性能。连续刷圈需结束后再改频率。"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
             <Button
                 android:id="@+id/recordButton"
                 style="@style/A9Tas.Button.Primary"
@@ -814,6 +849,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
             android:lineSpacingExtra="2dp"
+            android:id="@+id/compatibilityFootnote"
             android:text="稳定模式只接受精确身份匹配；实验模式仅绕过身份门，不会绕过 PID 生命周期与 libAsphalt9.so 映射约束。"
             android:textColor="@color/text_tertiary"
             android:textSize="12sp" />

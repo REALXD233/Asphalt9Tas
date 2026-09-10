@@ -1,0 +1,98 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A9 · 碰撞几何查看</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#10151d;color:#f2f5fa;font:15px/1.5 system-ui,sans-serif}canvas{width:100vw;height:100vh;display:block;touch-action:none}aside{position:absolute;top:20px;left:20px;width:min(320px,calc(100vw - 40px));padding:22px;background:#202936ee;border:1px solid #455065;border-radius:20px;backdrop-filter:blur(16px)}h1{font-size:24px;margin:4px 0;letter-spacing:-.03em}p{color:#b9c5d7;margin:10px 0}.eyebrow{color:#77c8ff;font-size:12px;letter-spacing:.12em}label{display:block;margin:12px 0}select,button{font:inherit;color:inherit;background:#35455a;border:1px solid #617289;border-radius:10px;padding:9px 12px}select{width:100%}button{cursor:pointer}button:active{background:#53799f}input{accent-color:#79cbff}footer{position:absolute;bottom:16px;left:20px;right:20px;color:#d3deea;pointer-events:none;text-shadow:0 1px 3px #000}#status{font-variant-numeric:tabular-nums}@media(prefers-reduced-transparency:reduce){aside{background:#202936;backdrop-filter:none}}@media(max-height:550px){aside{padding:12px;top:8px}p{margin:4px 0}}
+aside{max-height:calc(100dvh - 40px);overflow:auto}#panelToggle{position:absolute;top:12px;right:12px;min-height:44px}#panelContent{padding-top:12px}aside.collapsed{width:auto;padding:0;overflow:visible}aside.collapsed #panelToggle{position:static;margin:0;min-width:112px;border-radius:16px}button:focus-visible{outline:2px solid #a4ddff;outline-offset:3px}[hidden]{display:none!important}
+</style>
+<canvas tabindex="0" aria-label="碰撞几何三维视图"></canvas><aside id="panel">
+<button id="panelToggle" aria-expanded="true" aria-controls="panelContent">收起</button>
+<div id="panelContent">
+<div class="eyebrow">A9 / COLLISION LAB</div><h1>赛道碰撞几何</h1>
+<p>上游历史样本 · 非安卓实时地图<br>不代表完整空气墙或重置墙分类</p>
+<label>操控模式<select id="mode"><option value="fly">无人机 · 自由飞行</option><option value="orbit">环绕 · 全图观察</option></select></label>
+<label id="speedLabel">飞行速度 <output id="speedValue">1×</output><input style="width:100%" id="speed" type="range" min="-3" max="3" value="0" step="0.1"></label>
+<label>显示范围<select id="filter"><option value="all">全部对象</option><option value="solid" selected>有接触响应</option><option value="trigger">无接触响应 · 不等于重置</option><option value="wreck">撞毁属性 · wreck</option><option value="respawn">重生属性 · respawn</option></select></label>
+<p id="attributeLegend" hidden><span style="color:#ff6680">红：wreck</span> · <span style="color:#72edab">绿：respawn</span><br>蓝：其他实体 · 橙：其他无接触区域<br>属性已确认，具体触发条件未验证。</p>
+<label>查看对象<select id="object"><option value="all">全部对象</option></select></label>
+<label><input type="checkbox" id="wire" checked> 线框模式</label>
+<button id="reset">回到路面</button> <button id="top">全图俯视</button>
+<button id="focus" style="margin-top:8px">定位当前范围</button>
+<p id="status" role="status">正在加载几何…</p></div></aside>
+<footer id="help">点击画面后：WASD 移动 · 空格上升 · Shift 下降 · 右键拖动转头 · 滚轮调速</footer>
+<script>
+'use strict';
+const panel=document.querySelector('#panel'),panelToggle=document.querySelector('#panelToggle'),panelContent=document.querySelector('#panelContent');
+panelToggle.onclick=()=>{const collapsed=!panelContent.hidden;panelContent.hidden=collapsed;panel.classList.toggle('collapsed',collapsed);panelToggle.setAttribute('aria-expanded',String(!collapsed));panelToggle.textContent=collapsed?'展开工具':'收起';};
+const scene=/*SCENE_DATA*/[];
+const hasAttribute=(o,name)=>(o.attributes||[]).includes(name);
+document.querySelector('#attributeLegend').hidden=!scene.some(o=>hasAttribute(o,'wreck')||hasAttribute(o,'respawn'));
+if(!document.querySelector('#attributeLegend').hidden)document.querySelector('#filter').value='all';
+function matchesScope(o,filter,selected){const trigger=!!(o.flags&4);return (selected==='all'||+selected===o.id)&&!(filter==='solid'&&trigger||filter==='trigger'&&!trigger||filter==='wreck'&&!hasAttribute(o,'wreck')||filter==='respawn'&&!hasAttribute(o,'respawn')||['ramp','magnet','highjump','nochassis'].includes(filter)&&!hasAttribute(o,filter));}
+for(const [value,label] of [['ramp','坡道属性'],['magnet','磁吸属性'],['highjump','高跳属性'],['nochassis','nochassis 原始属性']]){const option=document.createElement('option');option.value=value;option.textContent=label+' · '+value;document.querySelector('#filter').append(option);}
+// Bullet game is Z-up; display/camera is Y-up, matching upstream TrackViewer.
+for(const o of scene)for(let i=0;i<o.vertices.length;i+=3){const y=o.vertices[i+1];o.vertices[i+1]=o.vertices[i+2];o.vertices[i+2]=-y;}
+const canvas=document.querySelector('canvas'), status=document.querySelector('#status');
+const gl=canvas.getContext('webgl',{antialias:true});
+try{
+if(!gl)throw Error('此浏览器无法创建 WebGL，请尝试支持硬件加速的浏览器。');
+const shader=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s};
+const program=gl.createProgram();
+gl.attachShader(program,shader(gl.VERTEX_SHADER,`attribute vec3 p;uniform vec2 rot,pan;uniform vec3 eye;uniform float zoom,aspect,flight;varying float light;void main(){vec3 q=p-eye*flight;float c=cos(rot.x),s=sin(rot.x);vec3 a=vec3(c*q.x+s*q.z,q.y,-s*q.x+c*q.z);float C=cos(rot.y),S=sin(rot.y);vec3 b=vec3(a.x,C*a.y-S*a.z,S*a.y+C*a.z);gl_Position=vec4((b.x*zoom+pan.x)/aspect,b.y*zoom+pan.y,b.z*.2,1.);if(flight>.5)gl_Position=vec4(b.x*1.732/aspect,b.y*1.732,-1.000002*b.z-.0002,-b.z);light=.85;}`));
+gl.attachShader(program,shader(gl.FRAGMENT_SHADER,`precision mediump float;uniform vec3 color;varying float light;void main(){gl_FragColor=vec4(color*light,1.);}`));
+gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));gl.useProgram(program);
+let min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
+for(const o of scene)for(let i=0;i<o.vertices.length;i++){let a=i%3;min[a]=Math.min(min[a],o.vertices[i]);max[a]=Math.max(max[a],o.vertices[i])}
+if(!Number.isFinite(min[0]))throw Error('文件没有可显示的几何');
+const center=min.map((v,i)=>(v+max[i])/2), extent=Math.max(...max.map((v,i)=>v-min[i]),1);
+// Geometry-only landing heuristic: broad horizontal solid face. Not a start line.
+let landing=null,bestArea=0;
+for(const o of scene){if(o.flags&4)continue;const v=o.vertices;
+for(let i=0;i<v.length;i+=9){const a=v.slice(i,i+3),b=v.slice(i+3,i+6),c=v.slice(i+6,i+9),u=b.map((x,j)=>x-a[j]),w=c.map((x,j)=>x-a[j]);
+const n=[u[1]*w[2]-u[2]*w[1],u[2]*w[0]-u[0]*w[2],u[0]*w[1]-u[1]*w[0]],area=Math.hypot(...n);
+if(area>bestArea&&Math.abs(n[1])/area>.98){const direction=[u,w,c.map((x,j)=>x-b[j])].sort((a,b)=>Math.hypot(b[0],b[2])-Math.hypot(a[0],a[2]))[0];
+bestArea=area;landing={eye:a.map((x,j)=>((x+b[j]+c[j])/3+(j===1?2.2:0)-center[j])*2/extent),yaw:Math.atan2(direction[0],-direction[2])};}}}
+const buffer=data=>{const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);return b};
+const objects=document.querySelector('#object');
+for(const o of scene){const v=o.vertices.map((v,i)=>(v-center[i%3])/extent*2), edges=[];for(let i=0;i<v.length;i+=9)for(const [a,b] of [[0,3],[3,6],[6,0]])edges.push(...v.slice(i+a,i+a+3),...v.slice(i+b,i+b+3));o.bounds=[[Infinity,Infinity,Infinity],[-Infinity,-Infinity,-Infinity]];for(let i=0;i<v.length;i++){o.bounds[0][i%3]=Math.min(o.bounds[0][i%3],v[i]);o.bounds[1][i%3]=Math.max(o.bounds[1][i%3],v[i]);}o.count=v.length/3;o.fill=buffer(v);o.line=buffer(edges);delete o.vertices;const opt=document.createElement('option');opt.value=String(o.id);opt.textContent=`对象 ${o.id} · ${(o.attributes||[]).join(', ')||(o.attributeStatus==='decoded'?'已读 · 无六项标记':'属性未分类')} · flags ${o.flags}`;objects.append(opt)}
+let yaw=landing?landing.yaw:.2,pitch=landing?.06:.65,zoom=.8,pan=[0,0],drag=null,scheduled=false;
+const mode=document.querySelector('#mode'),speed=document.querySelector('#speed');
+let eye=landing?[...landing.eye]:[-Math.sin(yaw)*Math.cos(pitch)*2.5,Math.sin(pitch)*2.5,Math.cos(yaw)*Math.cos(pitch)*2.5];
+const keys=new Set();let last=0;
+function resetView(){mode.value='fly';mode.onchange();yaw=landing?landing.yaw:.2;pitch=landing?.06:.65;zoom=.8;pan=[0,0];eye=landing?[...landing.eye]:[0,1.5,2];keys.clear();update()}
+function speedFeedback(){document.querySelector('#speedValue').textContent=(10**Number(speed.value)).toFixed(2)+'×';update()}
+function advance(now){const dt=last?Math.min((now-last)/1000,.05):0;last=now;if(mode.value!=='fly'||!keys.size)return;
+const f=(keys.has('KeyW')?1:0)-(keys.has('KeyS')?1:0),r=(keys.has('KeyD')?1:0)-(keys.has('KeyA')?1:0),u=(keys.has('Space')?1:0)-(keys.has('ShiftLeft')||keys.has('ShiftRight')?1:0);
+let v=[f*Math.sin(yaw)*Math.cos(pitch)+r*Math.cos(yaw),-f*Math.sin(pitch)+u,-f*Math.cos(yaw)*Math.cos(pitch)+r*Math.sin(yaw)];
+const len=Math.hypot(...v),step=16/extent*10**Number(speed.value)*dt/Math.max(1,len);eye=eye.map((x,i)=>x+v[i]*step);
+}
+const attr=gl.getAttribLocation(program,'p');gl.enableVertexAttribArray(attr);gl.enable(gl.DEPTH_TEST);
+const loc=n=>gl.getUniformLocation(program,n);
+function draw(now){scheduled=false;advance(now);const d=Math.min(devicePixelRatio||1,2),w=Math.round(innerWidth*d),h=Math.round(innerHeight*d);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}gl.viewport(0,0,w,h);gl.clearColor(.063,.082,.114,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.uniform3f(loc('eye'),...eye);gl.uniform1f(loc('flight'),mode.value==='fly'?1:0);gl.uniform2f(loc('rot'),yaw,pitch);gl.uniform2f(loc('pan'),...pan);gl.uniform1f(loc('zoom'),zoom);gl.uniform1f(loc('aspect'),w/h);let n=0,t=0;const filter=document.querySelector('#filter').value,wire=document.querySelector('#wire').checked;for(const o of scene){const trigger=!!(o.flags&4);if(!matchesScope(o,filter,objects.value))continue;gl.uniform3f(loc('color'),...(hasAttribute(o,'respawn')?[.45,.93,.67]:hasAttribute(o,'wreck')?[1,.4,.5]:trigger?[1,.64,.32]:[.35,.7,.87]));gl.bindBuffer(gl.ARRAY_BUFFER,wire?o.line:o.fill);gl.vertexAttribPointer(attr,3,gl.FLOAT,false,0,0);gl.drawArrays(wire?gl.LINES:gl.TRIANGLES,0,o.count*(wire?2:1));n++;t+=o.count/3}status.textContent=`${n} 个对象 · ${t.toLocaleString()} 个三角形`;if(keys.size&&mode.value==='fly')update()}
+function update(){if(!scheduled){scheduled=true;requestAnimationFrame(draw)}}
+canvas.oncontextmenu=e=>e.preventDefault();
+canvas.onpointerdown=e=>{canvas.focus();if(mode.value==='fly'&&e.button!==2&&e.pointerType!=='touch')return;canvas.setPointerCapture(e.pointerId);drag={id:e.pointerId,x:e.clientX,y:e.clientY}};
+canvas.onpointermove=e=>{if(!drag||drag.id!==e.pointerId)return;let dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;if(mode.value==='orbit'&&e.shiftKey){pan[0]+=dx/innerHeight*2;pan[1]-=dy/innerHeight*2}else{yaw+=dx*.003;pitch=Math.max(-1.55,Math.min(1.55,pitch+dy*.003))}update()};
+canvas.onpointerup=canvas.onpointercancel=canvas.onlostpointercapture=()=>drag=null;
+canvas.addEventListener('wheel',e=>{e.preventDefault();if(mode.value==='fly'){speed.value=Math.max(-3,Math.min(3,+speed.value-e.deltaY*.001));speedFeedback()}else{zoom=Math.max(.03,Math.min(200,zoom*Math.exp(-e.deltaY*.001)));update()}},{passive:false});
+const moveCodes=new Set(['KeyW','KeyA','KeyS','KeyD','Space','ShiftLeft','ShiftRight']);
+canvas.onkeydown=e=>{if(mode.value==='fly'&&moveCodes.has(e.code)){e.preventDefault();if(!keys.size)last=performance.now();keys.add(e.code);update()}};
+window.addEventListener('keyup',e=>keys.delete(e.code));
+function stop(){keys.clear();drag=null;last=0}
+canvas.onblur=stop;window.addEventListener('blur',stop);document.addEventListener('visibilitychange',()=>{if(document.hidden)stop()});
+document.querySelector('#reset').onclick=resetView;
+document.querySelector('#focus').onclick=()=>{
+const selected=scene.filter(o=>matchesScope(o,document.querySelector('#filter').value,objects.value));
+if(!selected.length){status.textContent='当前筛选没有对象，请切换显示范围或选择全部对象';return;}
+const lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity];
+for(const o of selected)for(let i=0;i<3;i++){lo[i]=Math.min(lo[i],o.bounds[0][i]);hi[i]=Math.max(hi[i],o.bounds[1][i]);}
+const c=lo.map((x,i)=>(x+hi[i])/2),radius=Math.max(.001,Math.hypot(...hi.map((x,i)=>(x-lo[i])/2)));
+const halfFov=Math.atan(Math.min(1,innerWidth/innerHeight)/1.732),distance=radius/Math.sin(halfFov)*1.15;
+mode.value='fly';mode.onchange();yaw=.45;pitch=.35;eye=[c[0]-Math.sin(yaw)*Math.cos(pitch)*distance,c[1]+Math.sin(pitch)*distance,c[2]+Math.cos(yaw)*Math.cos(pitch)*distance];keys.clear();update();
+};
+document.querySelector('#top').onclick=()=>{mode.value='orbit';mode.onchange();yaw=0;pitch=Math.PI/2;zoom=.8;pan=[0,0];update()};
+for(const e of document.querySelectorAll('select,input'))e.onchange=update;
+mode.onchange=()=>{stop();document.querySelector('#speedLabel').hidden=mode.value!=='fly';document.querySelector('#help').textContent=mode.value==='fly'?'点击画面后：WASD 移动 · 空格上升 · Shift 下降 · 右键拖动转头 · 滚轮调速':'拖动旋转 · Shift＋拖动平移 · 滚轮缩放';update()};
+speed.oninput=speedFeedback;
+onresize=update;update();
+}catch(e){status.textContent='加载失败：'+e.message;console.error(e)}
+</script></html>

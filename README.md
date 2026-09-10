@@ -6,6 +6,17 @@ Asphalt9Tas 是面向 Android 版《狂野飙车 9》的研究型 TAS 工具。�
 
 ## 当前能力
 
+### 2026-09-10 源码更新
+
+- 加入 120/144 Hz 录制时间步选项及 24000 Tick 容量；录像回放沿用录像自身时间步。
+- 改进 Android Root 扫描、共享录像导入与运行状态诊断。
+- 补充碰撞网格、材质区域、小地图节点的只读分析工具；这些工具仍属于研究性功能，不能把显示节点直接等同于已验证的检查点/重置触发区。
+- 最新修订保留首 Tick 故障的回调来源和底层错误码。Android 7 ARM64 上报告的 `error=13` 尚待实机复现确认，不能视为已修复。
+
+核心入口：`android-port/src/payload_g4_multi_hook_runtime_v1.cpp`（Hook 与执行）、`g4_g3_adapter_v1.h` / `g3_tick_coordinator_v1.h`（Tick 协调）、`g4_input_action_core_v1.h`（输入与状态）、`barrel_prng_v1.h`（确定性随机数）。APK 操作流程见 `android-port/A9TasAndroid/app/src/main/java/dev/a9tas/android/SessionOrchestrator.java`。
+
+本仓库不附带游戏二进制、设备内存转储、私人诊断包、签名或卡密签发私钥。部分历史构建/分析脚本依赖本地工具链及未公开的测试制品，并非所有脚本都能在干净克隆后直接运行。
+
 - ARM64 原生 Android 7+ 与 x86_64/ARM NativeBridge 运行路径
 - 自动扫描游戏进程、Build Profile 选择与未知 ARM64 核心签名定位
 - 逐 Tick 录制与确定性回放

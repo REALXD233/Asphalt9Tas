@@ -27,6 +27,8 @@ $arm64RuntimeSync = Join-Path $root 'sync-native-arm64-runtime-assets-v1.ps1'
 $identityProbeBuild = Join-Path $root 'build-android-identity-probe-v1.ps1'
 $practiceProbeBuild = Join-Path $root 'build-practice-mode-readonly-probe-v1.ps1'
 $profileAutogenBuild = Join-Path $root 'build-android-arm64-profile-autogen-v1.ps1'
+& (Join-Path $root 'test-root-shell-host-v1.ps1') | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'Root shell execution regression failed' }
 $iconBuilder = Join-Path $root 'tools/build_android_icon_v2.ps1'
 $toolchains = Join-Path $root '.toolchains'
 $java = Get-ChildItem -LiteralPath (Join-Path $toolchains 'jdk17') -Filter 'java.exe' `
@@ -72,6 +74,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Android identity probe build failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Practice-mode probe build failed' }
 & $profileAutogenBuild | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'ARM64 Profile autogen build failed' }
+& $profileAutogenBuild -HostMachine x86_64 | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'x86_64-host Profile autogen build failed' }
 & $arm64RuntimeSync | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Native ARM64 runtime asset synchronization failed' }
 & $iconBuilder | Out-Host

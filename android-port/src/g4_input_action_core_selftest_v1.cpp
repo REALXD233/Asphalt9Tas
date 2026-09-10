@@ -306,9 +306,15 @@ bool RejectMalformedSequences() {
       {4, 1, g4::FloatBits(1.0f / 60.0f)},
   };
   g4::IntervalDecisionV1 interval{};
+  g4::TickReceiptV1 invalid_receipt{};
+  // Diagnostics are validated as a group at EndTick. They must not alter
+  // the natural getter result, but malformed ordinals still must be rejected.
   if (g4::OnPhysicsIntervalAfterOriginal(
           &state, {wrong, 1}, g4::FloatBits(1.0f / 60.0f), &interval) !=
-      g4::Result::kIntervalMismatch)
+          g4::Result::kReady || interval.override_after_original ||
+      interval.final_output_bits != g4::FloatBits(1.0f / 60.0f) ||
+      g4::EndTick(&state, {wrong, 1}, &invalid_receipt) !=
+          g4::Result::kIntervalMismatch)
     return false;
 
   g4::StateV1 extra_state{};
@@ -361,11 +367,47 @@ bool RejectMalformedSequences() {
 
 }  // namespace
 
+// Exercise changing getter results within each tick, across record/replay,
+// with deliberately different recorded diagnostics. Logic delta must not
+// become the value returned by the independent physics getter.
+bool DynamicIntervalMatrix() {
+  const float values[] = {1.0f / 30.0f, 1.0f / 60.0f, 1.0f / 120.0f};
+  for (int replay_mode = 0; replay_mode != 2; ++replay_mode) {
+    g4::StateV1 state{};
+    for (std::uint64_t tick = 0; tick != 24; ++tick) {
+      auto packet = Packet(tick);
+      const g4::IntervalSampleV1 sample{tick, 0, g4::FloatBits(1.0f / 60.0f)};
+      const g4::IntervalReplayViewV1 view = replay_mode
+          ? g4::IntervalReplayViewV1{&sample, 1} : g4::IntervalReplayViewV1{};
+      // Each iteration supplies one independent diagnostic group.
+      state.interval_cursor = 0;
+      g4::PrePhysicsDecisionV1 pre{};
+      if (g4::BeginTick(&state, tick, replay_mode ? &packet : nullptr,
+                       0, 16667, &pre) != g4::Result::kReady ||
+          !pre.write_fixed_delta || pre.fixed_delta_us != 16667) return false;
+      for (std::uint32_t ordinal = 0; ordinal != 3; ++ordinal) {
+        const auto bits = g4::FloatBits(values[(tick + ordinal) % 3]);
+        g4::IntervalDecisionV1 decision{};
+        if (g4::OnPhysicsIntervalAfterOriginal(&state, view, bits, &decision) !=
+                g4::Result::kReady || decision.override_after_original ||
+            decision.final_output_bits != bits ||
+            decision.original_output_bits != bits || decision.ordinal != ordinal)
+          return false;
+      }
+      g4::TickReceiptV1 receipt{};
+      if (g4::EndTick(&state, view, &receipt) != g4::Result::kReady ||
+          receipt.physics_interval_calls != 3) return false;
+    }
+  }
+  return true;
+}
+
 int main() {
   const bool natural = NaturalRecord();
   const bool physics = PhysicsRecord();
   const bool correction = ConditionalPhysicsReplay();
-  const bool replay = AluDefaultIntervalPassthroughWithCallCountDrift();
+  const bool replay = AluDefaultIntervalPassthroughWithCallCountDrift() &&
+                      DynamicIntervalMatrix();
   const bool skips = IndependentSkipBits();
   const bool malformed = RejectMalformedSequences();
   std::printf("G4_INPUT_ACTION_CORE_SELFTEST passed=%d natural=%d physics=%d "

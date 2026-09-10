@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cinttypes>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
@@ -33,51 +35,51 @@ namespace action = a9tas::g4_input_action_v1;
 inline constexpr char kPayloadBasename[] =
     "liba9tas_g4_multi_hook_runtime_v1.so";
 inline constexpr std::uint8_t kExpectedSha256[32] = {
-    0xc9,0x20,0xcc,0xec,0x61,0xea,0x9a,0xa1,
-    0xf7,0x88,0x9a,0x88,0xb8,0xb5,0xdf,0x8a,
-    0x31,0xb5,0x7b,0x5a,0x74,0x5d,0x8a,0x77,
-    0x6c,0xf1,0x5c,0x6b,0xd5,0xd2,0xb0,0x23,
+    0xff,0x17,0xfb,0x16,0x9e,0xc3,0x98,0xb7,
+    0x8e,0x9c,0x71,0x73,0x74,0xf5,0xf9,0xc5,
+    0x0f,0xca,0x42,0xa8,0x47,0x9a,0x38,0x2a,
+    0x8f,0xe7,0x78,0x39,0x72,0x29,0xf9,0xc2,
 };
 inline constexpr char kExpectedBuildId[] =
-    "a71eecfe9c960050ad8d4ce1f8d398d5e8853028";
-inline constexpr std::uint64_t kExpectedFileSize = 0x142D98;
+    "f86c451bd2981c0e4db24a61a81aebaeeef169a9";
+inline constexpr std::uint64_t kExpectedFileSize = 0x3F4330;
 
-inline constexpr std::uintptr_t kCommandRva = 0xE370;
-inline constexpr std::size_t kCommandSize = 0x3A14;
-inline constexpr std::uintptr_t kControlLocatorRva = 0x22C10;
-inline constexpr std::uintptr_t kEvidenceLocatorRva = 0x22C18;
-inline constexpr std::uintptr_t kRuntimeLocatorRva = 0x22C20;
-inline constexpr std::uintptr_t kBuildProfileLocatorRva = 0x22C28;
-inline constexpr std::uintptr_t kReplayFramesLocatorRva = 0x22C30;
-inline constexpr std::uintptr_t kReplayIntervalsLocatorRva = 0x22C38;
-inline constexpr std::uintptr_t kRecordedFramesLocatorRva = 0x22C40;
-inline constexpr std::uintptr_t kRecordedIntervalsLocatorRva = 0x22C48;
+inline constexpr std::uintptr_t kCommandRva = 0xE78C;
+inline constexpr std::size_t kCommandSize = 0x3A48;
+inline constexpr std::uintptr_t kControlLocatorRva = 0x23090;
+inline constexpr std::uintptr_t kEvidenceLocatorRva = 0x23098;
+inline constexpr std::uintptr_t kRuntimeLocatorRva = 0x230A0;
+inline constexpr std::uintptr_t kBuildProfileLocatorRva = 0x230A8;
+inline constexpr std::uintptr_t kReplayFramesLocatorRva = 0x230B0;
+inline constexpr std::uintptr_t kReplayIntervalsLocatorRva = 0x230B8;
+inline constexpr std::uintptr_t kRecordedFramesLocatorRva = 0x230C0;
+inline constexpr std::uintptr_t kRecordedIntervalsLocatorRva = 0x230C8;
 
-inline constexpr std::uintptr_t kRuntimeStorageRva = 0x22C80;
-inline constexpr std::uintptr_t kEvidenceStorageRva = 0x14A540;
-inline constexpr std::uintptr_t kControlStorageRva = 0x14A880;
-inline constexpr std::uintptr_t kRecordedIntervalsStorageRva = 0x14AC40;
-inline constexpr std::uintptr_t kRecordedFramesStorageRva = 0x18AC40;
-inline constexpr std::uintptr_t kBuildProfileStorageRva = 0x287E40;
-inline constexpr std::uintptr_t kReplayFramesStorageRva = 0x287FC0;
-inline constexpr std::uintptr_t kReplayIntervalsStorageRva = 0x3851C0;
+inline constexpr std::uintptr_t kRuntimeStorageRva = 0x23100;
+inline constexpr std::uintptr_t kEvidenceStorageRva = 0x3FBAC0;
+inline constexpr std::uintptr_t kControlStorageRva = 0x3FBE00;
+inline constexpr std::uintptr_t kRecordedIntervalsStorageRva = 0x3FC1C0;
+inline constexpr std::uintptr_t kRecordedFramesStorageRva = 0x5731C0;
+inline constexpr std::uintptr_t kBuildProfileStorageRva = 0x8BEDC0;
+inline constexpr std::uintptr_t kReplayFramesStorageRva = 0x8BEF40;
+inline constexpr std::uintptr_t kReplayIntervalsStorageRva = 0xC0AB40;
 
-inline constexpr std::uintptr_t kFinalRwRva = 0x22240;
-inline constexpr std::uintptr_t kFinalRwLogicalEndRva = 0x3C52C0;
+inline constexpr std::uintptr_t kFinalRwRva = 0x226C0;
+inline constexpr std::uintptr_t kFinalRwLogicalEndRva = 0xD81C40;
 
 static_assert(sizeof(protocol::Control) == 0x240);
 static_assert(sizeof(protocol::Evidence) == 0x340);
 static_assert(sizeof(action::IntervalSampleV1) *
-                  protocol::kMaximumIntervalSamples == 0x40000);
+                  protocol::kMaximumIntervalSamples == 0x177000);
 static_assert(sizeof(recording::RecordingFrameV1) *
-                  protocol::kMaximumFrames == 0xFD200);
-static_assert(kRecordedIntervalsStorageRva + 0x40000 ==
+                  protocol::kMaximumFrames == 0x34BC00);
+static_assert(kRecordedIntervalsStorageRva + 0x177000 ==
               kRecordedFramesStorageRva);
-static_assert(kRecordedFramesStorageRva + 0xFD200 ==
+static_assert(kRecordedFramesStorageRva + 0x34BC00 ==
               kBuildProfileStorageRva);
-static_assert(kReplayFramesStorageRva + 0xFD200 ==
+static_assert(kReplayFramesStorageRva + 0x34BC00 ==
               kReplayIntervalsStorageRva);
-static_assert(kReplayIntervalsStorageRva + 0x40000 <=
+static_assert(kReplayIntervalsStorageRva + 0x177000 <=
               kFinalRwLogicalEndRva);
 
 struct Mapping {
@@ -255,7 +257,38 @@ inline bool Resolve(pid_t pid,int mem,Layout* output,
   std::uintptr_t bias=0;
   if (!detail::ReadMappings(pid,&maps,&identity,&bias))
     return fail("payload_maps");
-  const int file=open(identity.path.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
+  const auto open_mapped = [&](const char* path, bool follow_kernel_link) {
+    const int fd = open(path, O_RDONLY | O_CLOEXEC |
+                              (follow_kernel_link ? 0 : O_NOFOLLOW));
+    if (fd < 0) return fd;
+    struct stat mapped{};
+    if (fstat(fd, &mapped) == 0 && S_ISREG(mapped.st_mode) &&
+        static_cast<std::uint64_t>(mapped.st_ino) == identity.inode &&
+        static_cast<std::uint32_t>(major(mapped.st_dev)) == identity.dev_major &&
+        static_cast<std::uint32_t>(minor(mapped.st_dev)) == identity.dev_minor) return fd;
+    close(fd);
+    errno = ESTALE;
+    return -1;
+  };
+  int file=open_mapped(identity.path.c_str(),false);
+  if (file < 0) {
+    // maps names are in the game's mount namespace, not necessarily su's.
+    const std::string process_path = "/proc/" + std::to_string(pid) +
+                                     "/root" + identity.path;
+    file=open_mapped(process_path.c_str(),false);
+  }
+  if (file < 0) {
+    for (const Mapping& mapping : maps) {
+      if (!detail::SameFile(mapping, identity)) continue;
+      char mapped_file[128]{};
+      std::snprintf(mapped_file,sizeof(mapped_file),"/proc/%d/map_files/%" PRIxPTR
+                    "-%" PRIxPTR,pid,mapping.begin,mapping.end);
+      // map_files is a kernel-owned symlink. Validate the opened inode/dev/hash
+      // below exactly as for the ordinary path, never a same-name replacement.
+      file=open_mapped(mapped_file,true);
+      if (file >= 0) break;
+    }
+  }
   if (file<0) return fail("payload_open");
   struct stat info{};
   std::uint8_t hash[32]{};

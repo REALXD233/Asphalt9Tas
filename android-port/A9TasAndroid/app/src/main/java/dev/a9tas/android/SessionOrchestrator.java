@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
 final class SessionOrchestrator {
     private static final String PROFILE = "/data/local/tmp/a9tas_g8_runtime_build_profile_v1.bin";
     private static final String ACK = "I_ACCEPT_G4_TICK_COORDINATOR_V1";
-    private static final int CAPACITY = 7200;
+    private static final int CAPACITY = 24000;
 
     static boolean shouldSealExistingTicks(boolean complete, int ticks, boolean saveRequested) {
         return !complete && ticks > 0 && saveRequested;
@@ -147,6 +147,7 @@ final class SessionOrchestrator {
         final String nativeSha;
         final BuildProfileRegistry.Profile profile;
         final ArtifactRegistry.Backend backend;
+        int recordDeltaUs = 16667;
 
         Identity(int pid, long startTicks, long base, String packageName,
                  String processName, String nativeSha,
@@ -172,6 +173,25 @@ final class SessionOrchestrator {
         String prefix = "/data/local/tmp/a9tas-g10-session-" + identity.pid;
         boolean installAttempted = false;
         try {
+            String observation = prefix + ".a9pio2";
+            String observeScript = "rm -f " + observation + " && " +
+                    devicePath(identity.backend.observerDeviceName) + " " +
+                    identity.pid + " " + Long.toHexString(identity.base) + " 300 10 " +
+                    observation + " 0 " + PROFILE + " && " +
+                    "test -s " + observation + " && " +
+                    "echo G10_OBSERVATION_HEX_BEGIN && od -An -tx1 -v " + observation +
+                    " && echo G10_OBSERVATION_HEX_END";
+            RootShell.Result observed = RootShell.runFixedScript(observeScript, 20L);
+            require(observed.ok(), "StepOptions observer failed: " + tail(text(observed.output)));
+            String hex = between(observed.output, "G10_OBSERVATION_HEX_BEGIN",
+                    "G10_OBSERVATION_HEX_END");
+        byte[] profileBytes = BuildProfileRegistry.readAll(identity.profile.open(context));
+            PhysicsIntervalReceipt.Result parsed = PhysicsIntervalReceipt.parse(
+                    PhysicsIntervalReceipt.decodeHex(hex), profileBytes,
+                    identity.pid, identity.base);
+
+            // Read-only discovery must finish before publishing any hook.
+            // A missing race object must not require rollback or kill the game.
             // The controller may have published a passive hook before the host
             // observes its return or timeout. From this point every failure is
             // therefore a restore-or-terminate path.
@@ -202,23 +222,6 @@ final class SessionOrchestrator {
             require(passiveResult.ok() && passiveText.contains("G4_PASSIVE installed=1 ") &&
                             hasToken(passiveText, "error=0"),
                     "passive identity receipt rejected: " + tail(passiveText));
-
-            String observation = prefix + ".a9pio2";
-            String observeScript = "rm -f " + observation + " && " +
-                    devicePath(identity.backend.observerDeviceName) + " " +
-                    identity.pid + " " + Long.toHexString(identity.base) + " 300 10 " +
-                    observation + " 0 " + PROFILE + " && " +
-                    "test -s " + observation + " && " +
-                    "echo G10_OBSERVATION_HEX_BEGIN && od -An -tx1 -v " + observation +
-                    " && echo G10_OBSERVATION_HEX_END";
-            RootShell.Result observed = RootShell.runFixedScript(observeScript, 20L);
-            require(observed.ok(), "StepOptions observer failed: " + tail(text(observed.output)));
-            String hex = between(observed.output, "G10_OBSERVATION_HEX_BEGIN",
-                    "G10_OBSERVATION_HEX_END");
-        byte[] profileBytes = BuildProfileRegistry.readAll(identity.profile.open(context));
-            PhysicsIntervalReceipt.Result parsed = PhysicsIntervalReceipt.parse(
-                    PhysicsIntervalReceipt.decodeHex(hex), profileBytes,
-                    identity.pid, identity.base);
 
             SharedPreferences preferences = context.getSharedPreferences("session", Context.MODE_PRIVATE);
             boolean published = preferences.edit().putLong("session_base", identity.base)
@@ -385,7 +388,7 @@ final class SessionOrchestrator {
                         : armText.contains("G4_OBJECT_DIAG lifecycle=0") &&
                         armText.contains("countdown=0")
                         ? "未检测到倒计时 3 锚点；请在 Retry 新局显示 3 时暂停，然后重试"
-                        : "lifecycle record arm rejected: " + tail(armText);
+                        : "lifecycle record arm rejected: " + objectFailureDetails(armText);
                 require(armed.ok() && armText.contains(
                                 "G4_ACTION action=" + expectedAction + " ") &&
                                 hasToken(armText, "status=1") &&
@@ -1484,9 +1487,11 @@ final class SessionOrchestrator {
         require(helper != null, "stored identity helper changed");
         String probe = devicePath(helper.deviceName);
 
-        String script = "[ -r /proc/" + pid + "/maps ]; " +
-                "st=$(sed 's/^[^)]*) //' /proc/" + pid + "/stat); set -- $st; s=${20}; " +
-                "[ \"$s\" = \"" + startTicks + "\" ]; " +
+        String script = "if [ ! -d /proc/" + pid + " ]; then echo G10_SESSION_PROCESS_GONE; exit 72; fi; " +
+                "[ -r /proc/" + pid + "/maps ]; " +
+                "st=$(sed 's/^[^)]*) //' /proc/" + pid + "/stat) || exit 73; set -- $st; s=${20:-}; " +
+                "[ -n \"$s\" ] || exit 73; if [ \"$s\" != \"" + startTicks +
+                "\" ]; then echo G10_SESSION_PROCESS_GONE; exit 72; fi; " +
                 "grep -q '^TracerPid:[[:space:]]*0$' /proc/" + pid + "/status; " +
                 "bases=; while read range perms offset dev inode mapped rest; do " +
                 "if [ \"$offset\" = 00000000 ]; then case \"$mapped\" in *libAsphalt9.so*) " +
@@ -1503,13 +1508,20 @@ final class SessionOrchestrator {
                 "echo G10_SESSION_IDENTITY base=$b";
         RootShell.Result checked = RootShell.runFixedScript(script, 25L);
         String output = text(checked.output);
+        if (output.contains("G10_SESSION_PROCESS_GONE")) {
+            clearTerminatedRuntimeState(context);
+            throw new IOException("原游戏进程已退出，已清理失效会话；录像仍保留。请重新扫描并准备游戏。");
+        }
         Matcher match = Pattern.compile("(?m)^G10_SESSION_IDENTITY base=([0-9a-fA-F]+)$").matcher(output);
         require(checked.ok() && match.find(), "fresh process identity verification failed: " + tail(output));
         long base = Long.parseUnsignedLong(match.group(1), 16);
         if (useStoredBase)
             require(base == preferences.getLong("session_base", 0L), "stored game base changed");
-        return new Identity(pid, startTicks, base, packageName, processName,
+        Identity identity = new Identity(pid, startTicks, base, packageName, processName,
                 nativeSha, profile, backend);
+        int hz = preferences.getInt("record_tick_hz", 60);
+        identity.recordDeltaUs = hz == 120 ? 8333 : hz == 144 ? 6944 : 16667;
+        return identity;
     }
 
     private static String waitForCompletion(Identity identity, long owner, String prefix,
@@ -1541,7 +1553,7 @@ final class SessionOrchestrator {
                     .matcher(status);
             require(errorMatch.find(), "progress receipt has no error field");
             require("0".equals(errorMatch.group(1)),
-                    "runtime reported an error: " + tail(status));
+                    "runtime reported an error: " + runtimeFailureDetails(status));
             Matcher checks = Pattern.compile(
                     "(?:^|\\s)checks=1,1,([01]),([01]),1,1\\s+reject=([0-9]+)")
                     .matcher(status);
@@ -1561,9 +1573,12 @@ final class SessionOrchestrator {
             } else
                 require(status.contains(" control=1,0 "),
                         "active progress control is not armed: " + tail(status));
-            if (ticks != lastTicks && observer != null) {
+            if (ticks != lastTicks) {
                 lastProgressNanos = System.nanoTime();
-                observer.onProgress(ticks, progressLimit);
+                // This is an inactivity limit, not a maximum recording length.
+                // Advance it even when the caller has no UI observer.
+                deadline = lastProgressNanos + 240_000_000_000L;
+                if (observer != null) observer.onProgress(ticks, progressLimit);
                 lastTicks = ticks;
             }
             if (complete) return status;
@@ -1598,7 +1613,7 @@ final class SessionOrchestrator {
             Thread.sleep(waitIndefinitelyAtTickZero && ticks == 0 ?
                     Math.max(500L, observationPoll * 4L) : observationPoll);
         }
-        throw new IOException("operation completion timed out after 240 seconds");
+        throw new IOException("operation made no tick progress for 240 seconds");
     }
 
     private static String waitForCompletionAndPause(
@@ -1786,7 +1801,9 @@ final class SessionOrchestrator {
                                      String output, String replayInput, int capacity,
                                      int replaySpeed, int replayCompletionMode,
                                      String cancellationSignal) {
-        StringBuilder command = new StringBuilder(devicePath(identity.backend.controllerDeviceName))
+        StringBuilder command = new StringBuilder("A9TAS_RECORD_DELTA_US=")
+                .append(identity.recordDeltaUs).append(' ')
+                .append(devicePath(identity.backend.controllerDeviceName))
                 .append(' ').append(action).append(' ')
                 .append(identity.pid).append(' ').append(identity.startTicks).append(' ')
                 .append(Long.toHexString(identity.base)).append(' ')
@@ -1889,7 +1906,7 @@ final class SessionOrchestrator {
                 " rc=$a9tas_controller_rc missing=1; exit 71; fi; " +
                 "cat " + output + "; echo G10_CONTROLLER_FILE_RECEIPT action=" +
                 action + " rc=$a9tas_controller_rc missing=0; rm -f " + transport;
-        return RootShell.runFixedScript(script, timeoutSeconds);
+        return RootShell.runFixedScript(script, timeoutSeconds, "controller-" + action);
     }
 
     private static boolean provenNoMutationInstallFailure(String receipt) {
@@ -1920,7 +1937,7 @@ final class SessionOrchestrator {
                 " rc=$a9tas_controller_rc missing=1; exit 72; fi; " +
                 "cat " + receipt + "; echo G10_CONTROLLER_STDOUT_RECEIPT action=" +
                 action + " rc=$a9tas_controller_rc missing=0";
-        return RootShell.runFixedScript(script, timeoutSeconds);
+        return RootShell.runFixedScript(script, timeoutSeconds, "controller-" + action);
     }
 
     /**
@@ -2078,6 +2095,30 @@ final class SessionOrchestrator {
     }
 
     private static String text(List<String> lines) { return String.join("\n", lines); }
+    static String objectFailureDetails(String value) {
+        StringBuilder diagnostics = new StringBuilder();
+        for (String line : value.split("\n")) {
+            if (line.startsWith("G4_OBJECT_DIAG ") && diagnostics.length() < 1200)
+                diagnostics.append(line).append('\n');
+        }
+        return diagnostics.toString() + tail(value);
+    }
+    // Preserve the callback counters and fault origin, not just the last UI
+    // fields. A tail-only exception made remote first-tick faults impossible
+    // to distinguish from identity failures and late frame callbacks.
+    static String runtimeFailureDetails(String value) {
+        StringBuilder result = new StringBuilder();
+        for (String key : new String[]{"error", "fault_context", "fault_tick",
+                "coordinator_result", "coordinator_intervals", "coordinator",
+                "core_results", "begin", "interval", "interval_calls",
+                "final", "end", "ticks", "records", "checks", "reject"}) {
+            Matcher field = Pattern.compile("(?:^|\\s)" + Pattern.quote(key)
+                    + "=([^\\s]+)").matcher(value);
+            if (field.find()) result.append(key).append('=').append(field.group(1)).append(' ');
+        }
+        return result.append('\n').append(value.length() <= 4096
+                ? value : value.substring(0, 3072) + "\n[truncated]\n" + tail(value)).toString();
+    }
     private static String tail(String value) {
         return value.length() <= 480 ? value : value.substring(value.length() - 480);
     }

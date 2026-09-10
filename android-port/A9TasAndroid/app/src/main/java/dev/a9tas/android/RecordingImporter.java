@@ -19,15 +19,24 @@ final class RecordingImporter {
     static A9TasLibrary.Entry importArchive(Context context, Uri source) throws Exception {
         if (source == null || !"content".equals(source.getScheme()))
             throw new IOException("import source is not a content URI");
+        return importStream(context, context.getContentResolver().openInputStream(source));
+    }
+
+    static A9TasLibrary.Entry importStream(Context context, InputStream source) throws Exception {
+        try (InputStream input = source) {
+            if (input == null) throw new IOException("document provider returned no input");
+            return copyAndPublish(context, input);
+        }
+    }
+
+    private static A9TasLibrary.Entry copyAndPublish(Context context, InputStream input) throws Exception {
         File directory = new File(context.getFilesDir(), "library");
         if (!directory.isDirectory() && !directory.mkdirs())
             throw new IOException("unable to create A9TAS library");
         File pending = new File(directory, ".import-" + UUID.randomUUID() + ".pending");
         long bytes = 0;
         try {
-            try (InputStream input = context.getContentResolver().openInputStream(source);
-                 FileOutputStream output = new FileOutputStream(pending, false)) {
-                if (input == null) throw new IOException("document provider returned no input");
+            try (FileOutputStream output = new FileOutputStream(pending, false)) {
                 byte[] buffer = new byte[64 * 1024];
                 int count;
                 while ((count = input.read(buffer)) != -1) {

@@ -2,6 +2,7 @@
 #include "barrel_stabilization_replay_core_v1.h"
 #include "barrel_prng_v1.h"
 #include "g8_runtime_build_profile_v1.h"
+#include "realtime_tick_budget_v1.h"
 
 #include <android/log.h>
 #include <elf.h>
@@ -32,6 +33,8 @@ namespace build_profile = a9tas::g8_runtime_build_profile_v1;
 using namespace a9tas::g4_multi_hook_runtime_v1;
 
 namespace {
+
+a9tas::realtime_tick_budget_v1::Budget g_realtime_budget{};
 
 constexpr const char* kTag = "A9TAS_G4";
 constexpr const char* kGameBasename = "libAsphalt9.so";
@@ -1013,7 +1016,43 @@ G4DispatcherEntryV1(void* owner, std::int64_t* elapsed) {
     }
   }
 
-  for (std::uint32_t iteration = 0; iteration < factor; ++iteration) {
+  // Match the upstream real-time accumulator: high-frequency outer callbacks
+  // must not each consume a full 16.667ms of simulated time. Low-frequency
+  // callbacks may execute several complete ticks; replay scales elapsed budget.
+  // Normal-speed quantization is centered by Budget (half-tick phase credit),
+  // preserving one natural update under small callback timing jitter.
+  const bool paced = enabled && g_control.completed == 0 &&
+      (g_control.mode == static_cast<std::uint32_t>(RunMode::kRecord) ||
+       g_control.mode == static_cast<std::uint32_t>(RunMode::kReplay)) &&
+      g_control.lifecycle_state_address != 0 &&
+      __atomic_load_n(reinterpret_cast<const std::uint32_t*>(
+          g_control.lifecycle_state_address), __ATOMIC_RELAXED) == 3u;
+  const std::uint32_t batch_mode = g_control.mode;
+  accelerated_generation = g_control.generation;
+  std::uint32_t iterations = factor;
+  const bool budget_owner = dispatcher_tracked && CurrentDispatcherDepth(tid) == 1u;
+  if (budget_owner) {
+    LockRuntime();
+    if (paced) {
+      timespec now{};
+      if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+        const std::uint64_t now_ns = static_cast<std::uint64_t>(now.tv_sec) *
+            1000000000ULL + static_cast<std::uint64_t>(now.tv_nsec);
+        iterations = g_realtime_budget.Plan(now_ns, accelerated_generation,
+                                            g_control.fixed_delta_us * 1000ULL, factor);
+      } else {
+        g_realtime_budget.Reset();
+        iterations = 1;
+      }
+    } else {
+      g_realtime_budget.Reset();
+    }
+    UnlockRuntime();
+  } else {
+    iterations = 1; // nested/concurrent calls do not receive synthetic batches
+  }
+  for (std::uint32_t iteration = 0; iteration < iterations; ++iteration) {
+    const std::uint32_t ticks_before = g_runtime.receipt_count;
     G4DispatcherOriginalV1(owner, elapsed);
     if (enabled) {
       if (g_evidence.first_tid[kLogicDispatcherHook] == 0)
@@ -1031,15 +1070,23 @@ G4DispatcherEntryV1(void* owner, std::int64_t* elapsed) {
     // authoritative mode and generation before issuing another synthetic Tick;
     // otherwise the old replay's cached 2x/4x/8x factor leaks into the first
     // recording attempt.
-    if (iteration + 1u == factor ||
+    const bool tick_progressed = g_runtime.receipt_count != ticks_before;
+    if (paced && !tick_progressed && budget_owner) {
+      // Paused UI calls do not consume physics ticks. Keep servicing them once
+      // per callback instead of replaying a catch-up batch while paused.
+      LockRuntime();
+      g_realtime_budget.Reset();
+      UnlockRuntime();
+    }
+    if (iteration + 1u == iterations || !tick_progressed ||
         __atomic_load_n(&g_control.enabled, __ATOMIC_ACQUIRE) == 0 ||
         __atomic_load_n(&g_control.completed, __ATOMIC_ACQUIRE) != 0 ||
         __atomic_load_n(&g_control.mode, __ATOMIC_ACQUIRE) !=
-            static_cast<std::uint32_t>(RunMode::kReplay) ||
+            batch_mode ||
         __atomic_load_n(&g_control.generation, __ATOMIC_ACQUIRE) !=
             accelerated_generation ||
-        __atomic_load_n(&g_control.replay_speed_factor, __ATOMIC_ACQUIRE) !=
-            factor ||
+        (batch_mode == static_cast<std::uint32_t>(RunMode::kReplay) &&
+         __atomic_load_n(&g_control.replay_speed_factor, __ATOMIC_ACQUIRE) != factor) ||
         __atomic_load_n(&g_evidence.status, __ATOMIC_ACQUIRE) == kFault ||
         (g_control.lifecycle_state_address != 0 &&
          __atomic_load_n(reinterpret_cast<const std::uint32_t*>(

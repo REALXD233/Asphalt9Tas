@@ -248,6 +248,10 @@ def _validate_manifest(manifest: dict[str, Any], source: A9G4R2Summary,
         "generation": source.generation,
         "target_tick": target_tick,
     }
+    # Android JSONObject serializes Java long as signed. Accept that exact
+    # two's-complement representation without changing the archive bytes.
+    if source.session_id >= (1 << 63) and recording["session_id"] < 0:
+        expected_recording["session_id"] = source.session_id - (1 << 64)
     if recording != expected_recording:
         raise RecordingError("manifest.recording_identity")
 

@@ -29,19 +29,27 @@ final class Arm64ProfileAutoGenerator {
 
     private Arm64ProfileAutoGenerator() {}
 
+    static boolean supports(GameProcessScanner.Candidate candidate,
+                            ArtifactRegistry.Backend backend) {
+        if (candidate == null || backend == null ||
+                backend.profileAutogenDeviceName == null) return false;
+        return ("arm64".equals(candidate.hostMachine) && !candidate.nativeBridge &&
+                "none".equals(candidate.bridgeSet)) ||
+                ("x86_64".equals(candidate.hostMachine) && candidate.nativeBridge);
+    }
+
     static BuildProfileRegistry.Profile generate(Context context,
             GameProcessScanner.Candidate candidate,
             ArtifactRegistry registry) throws Exception {
         if (candidate == null || candidate.pid <= 0 || candidate.startTicks <= 0 ||
-                !"arm64".equals(candidate.hostMachine) || candidate.nativeBridge ||
-                !"none".equals(candidate.bridgeSet) || candidate.libraryPath.isEmpty())
-            throw new IOException("所选进程不是可解析的原生 ARM64 游戏核心");
+                candidate.libraryPath.isEmpty())
+            throw new IOException("所选游戏进程身份或核心路径不可用");
         ArtifactRegistry.Backend backend = candidate.backend != null ? candidate.backend :
                 registry.findExperimental(candidate.hostMachine, candidate.bridgeSet);
-        if (backend == null || backend.profileAutogenDeviceName == null)
-            throw new IOException("当前 ARM64 后端没有 Profile 自动生成器");
+        if (!supports(candidate, backend))
+            throw new IOException("此环境没有 ARM64 核心定位器；支持原生 ARM64 与 x86_64 转译环境");
         ArtifactRegistry.Artifact resolver = find(backend, backend.profileAutogenDeviceName);
-        ArtifactRegistry.IdentityHelper identity = registry.identityHelperFor("arm64");
+        ArtifactRegistry.IdentityHelper identity = registry.identityHelperFor(candidate.hostMachine);
         if (identity == null) throw new IOException("ARM64 身份工具不可用");
 
         File stage = new File(context.getCacheDir(), resolver.deviceName);
@@ -72,7 +80,7 @@ final class Arm64ProfileAutoGenerator {
                 quote(localOutput.getCanonicalPath()) + "; chmod 0600 " +
                 quote(localOutput.getCanonicalPath()) + ";";
         try {
-            RootShell.Result result = RootShell.runFixedScript(script, 420L);
+            RootShell.Result result = RootShell.runFixedScript(script, 420L, "profile-autogen");
             String output = String.join("\n", result.output);
             if (!result.ok()) throw new IOException(result.timedOut ?
                     "Profile 自动定位超时" : "Profile 自动定位失败：" + tail(output));

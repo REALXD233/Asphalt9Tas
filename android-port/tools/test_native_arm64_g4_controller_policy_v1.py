@@ -314,6 +314,10 @@ def main() -> int:
         require(token in g4,
                 f"controller atomic handoff receipt missing: {token}")
     for token in ("accelerated_generation",
+                  "g_realtime_budget.Plan",
+                  "batch_mode",
+                  "!tick_progressed",
+                  "CurrentDispatcherDepth(tid) == 1u",
                   "__atomic_load_n(&g_control.mode, __ATOMIC_ACQUIRE)",
                   "__atomic_load_n(&g_control.generation, __ATOMIC_ACQUIRE)",
                   "__atomic_load_n(&g_control.replay_speed_factor, __ATOMIC_ACQUIRE)"):
@@ -361,6 +365,23 @@ def main() -> int:
     restored_end = g4.index("bool PassiveControlValid(", restored_begin)
     require("CompleteReceiptValid(" not in g4[restored_begin:restored_end],
             "restored reuse must mirror the payload contract after UI pause")
+    artifacts = g4[g4.index("bool ResolveArtifacts("):g4.index("bool ValidateMainObject(")]
+    require("bool status_only" in artifacts and "if (!status_only &&" in artifacts,
+            "status must not resolve an unused native return trap")
+    require(artifacts.index("if (status_only)") <
+            artifacts.index("ReadPinnedRegularFile(game->path.c_str()"),
+            "status must not rehash the entire game image on every poll")
+    require("action == Action::kStatus))" in g4,
+            "lightweight artifact resolution must be restricted to status")
+    status_begin = g4.index("  if (action == Action::kStatus ||", g4.index("int main("))
+    status_body = g4[status_begin:g4.index("  if (action == Action::kDumpReplayDiagnostic)", status_begin)]
+    require("g2::ReadAt(mem, control.lifecycle_state_address, &live_lifecycle)" in status_body,
+            "status must use the payload-published lifecycle address")
+    require("g2::ReadAt(mem, runtime.lifecycle_state, &live_lifecycle)" not in status_body,
+            "uninitialized controller lifecycle address forces a full scan")
+    require("ShouldRelocateLifecycle(" in status_body and
+            "bound_session_active, live_lifecycle_valid, live_lifecycle" in status_body,
+            "running status must use bounded lifecycle observation")
     print("NATIVE_ARM64_G4_CONTROLLER_POLICY passed=1 shared_g4_core=1 "
           "direct_payload=1 stopped_reresolve=1 shared_command_contract=1 "
           "x86_path_retained=1 cancelled_queue_matrix=7 backend_enabled=0")

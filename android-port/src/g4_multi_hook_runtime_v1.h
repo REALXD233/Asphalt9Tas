@@ -18,7 +18,7 @@ inline constexpr std::uint32_t kSetterCount = 3;
 inline constexpr std::uint32_t kInstalledSetterCount = 2;
 inline constexpr std::uint32_t kMaximumFrames =
     g4_g3_adapter_v1::kMaximumReceipts;
-inline constexpr std::uint32_t kMaximumIntervalSamples = 16384;
+inline constexpr std::uint32_t kMaximumIntervalSamples = kMaximumFrames * 4;
 inline constexpr std::uint32_t kMinimumReplaySpeedFactor = 1;
 inline constexpr std::uint32_t kMaximumReplaySpeedFactor = 8;
 // Existing ABI-tail field values for an AluTasV2-style synchronous replay

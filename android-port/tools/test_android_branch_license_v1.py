@@ -89,7 +89,7 @@ class AndroidBranchLicenseTest(unittest.TestCase):
                       "edited.putInt(28, totalIntervals)",
                       "view.putLong(0, tick)", "view.putLong(8, Math.multiplyExact",
                       "prefixSummary.frameCount", "A9TasArchive.inspectSource(pending)",
-                      "materializeReplaySource", "MAX_FRAMES = 7200"):
+                      "materializeReplaySource", "MAX_FRAMES = 24000"):
             self.assertIn(token, source)
 
     def test_branch_adopts_one_native_timeline(self) -> None:
@@ -107,7 +107,23 @@ class AndroidBranchLicenseTest(unittest.TestCase):
                         method.index("A9TasBranchEditor.adoptContinuous"))
         self.assertNotIn("A9TasBranchEditor.splice", method)
         self.assertIn('putBoolean("replay_pause_at_target", true)', method)
-        self.assertIn("Keep the old archive immutable", method)
+        # Finishing a suffix archives a candidate, but only an explicit paused
+        # save promotes it to the selected prefix for the next Retry.
+        saved = method[method.index("SharedPreferences.Editor branchSaved"):
+                       method.index("branchSaved.apply();")]
+        guard = saved.index("if (suffix.checkpoint)")
+        for key in ("selected_archive", "selected_archive_sha",
+                    "selected_archive_title", "replay_target_tick",
+                    "replay_target_archive_sha"):
+            self.assertGreater(saved.index('"' + key + '"'), guard)
+        self.assertLess(saved.index('"latest_archive"'), guard)
+        consumed = method[method.index("// The suffix has finished:"):
+                          method.index("A9TasBranchEditor.adoptContinuous")]
+        self.assertIn("clearPendingBranch(preferences)", consumed)
+        queue = orchestrator[orchestrator.index("static ReplayReceipt queueNextRacePrefix"):
+                             orchestrator.index("static ReplayReceipt queueNextRacePrefix") + 8500]
+        self.assertIn('getInt("replay_speed_factor", 1)', queue)
+        self.assertIn('45L, replaySpeed, 2', queue)
         for token in ("ACTION_CHECKPOINT_BRANCH", "requestCheckpointBranch",
                       "branchAfterCleanWaitingCancellation",
                       'target >= base.summary.frameCount'):

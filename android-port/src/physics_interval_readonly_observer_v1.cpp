@@ -23,6 +23,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <vector>
+#include "remote_data_address_v1.h"
 
 namespace {
 
@@ -122,12 +123,20 @@ std::uint64_t MonotonicNs() {
 }
 
 bool ReadExact(int fd, std::uintptr_t address, void* output, std::size_t size) {
+    const std::uintptr_t raw_address = address;
+    address = a9tas::remote_data_address_v1::Untag(address);
+    if (address > UINTPTR_MAX - size) return false;
     auto* cursor = static_cast<std::uint8_t*>(output);
     std::size_t done = 0;
     while (done < size) {
         const ssize_t count = pread(fd, cursor + done, size - done,
                                     static_cast<off_t>(address + done));
-        if (count <= 0) return false;
+        if (count <= 0) {
+            std::fprintf(stderr, "PhysicsContext read_failed raw=0x%" PRIxPTR
+                " offset=0x%" PRIxPTR " size=%zu result=%zd errno=%d\n",
+                raw_address, address + done, size - done, count, errno);
+            return false;
+        }
         done += static_cast<std::size_t>(count);
     }
     return true;
@@ -160,6 +169,7 @@ bool ReadMaps(pid_t pid, std::vector<Mapping>* maps) {
 
 const Mapping* FindMapping(const std::vector<Mapping>& maps,
                            std::uintptr_t address, std::size_t size) {
+    address = a9tas::remote_data_address_v1::Untag(address);
     if (size == 0 || address > UINTPTR_MAX - size) return nullptr;
     const std::uintptr_t end = address + size;
     for (const auto& map : maps) {
@@ -233,7 +243,7 @@ bool ValidatePhysicsContext(int mem, const std::vector<Mapping>& maps,
                             std::uintptr_t* world_out) {
     if (context > UINTPTR_MAX - kContextCompletionTokenOffset - 8 ||
         !IsWritable(maps, context, kContextCompletionTokenOffset + 8))
-        return false;
+        { std::fprintf(stderr, "PhysicsContext reject=context_mapping address=0x%" PRIxPTR "\n", context); return false; }
     std::uintptr_t vtable = 0, adapter = 0, adapter_vtable = 0;
     std::uintptr_t dispatch = 0, world = 0, world_vtable = 0;
     float interval = 0.0f;
@@ -252,7 +262,7 @@ bool ValidatePhysicsContext(int mem, const std::vector<Mapping>& maps,
         !ReadExact(mem, adapter + kBackendAdapterWorldOffset, &world,
                    sizeof(world)) || world == 0 ||
         !ReadExact(mem, world, &world_vtable, sizeof(world_vtable)))
-        return false;
+        { std::fprintf(stderr, "PhysicsContext reject=pointer_chain address=0x%" PRIxPTR " errno=%d\n", context, errno); return false; }
 #ifdef A9TAS_G8_PROFILE_OBSERVER
     const bool backend_identity = g_runtime_build.profile_driven
         ? IsGameReadonly(maps, dispatch, sizeof(std::uint32_t)) &&
@@ -271,7 +281,11 @@ bool ValidatePhysicsContext(int mem, const std::vector<Mapping>& maps,
         !IsWritable(maps, adapter, sizeof(std::uintptr_t)) ||
         !IsWritable(maps, world + kWorldAccumulatorOffset,
                     sizeof(std::uint32_t)))
-        return false;
+        { std::fprintf(stderr, "PhysicsContext reject=fields address=0x%" PRIxPTR
+            " interval=%g worker=%u,%u adapter=0x%" PRIxPTR
+            " world=0x%" PRIxPTR " dispatch=0x%" PRIxPTR "\n",
+            context, interval, worker_enabled, worker_mode, adapter, world, dispatch);
+          return false; }
     *adapter_out = adapter;
     *world_out = world;
     return true;
@@ -298,6 +312,10 @@ bool ResolvePhysicsContext(pid_t pid, int mem, std::uintptr_t base,
     const std::uintptr_t expected_vtable = base + kPhysicsContextVtableRva;
 #endif
     std::vector<std::uintptr_t> candidates;
+    std::size_t hits = 0, read_failures = 0;
+    const long native_page_size = sysconf(_SC_PAGESIZE);
+    const std::uintptr_t page_size = native_page_size > 0
+        ? static_cast<std::uintptr_t>(native_page_size) : 4096u;
     std::vector<std::uint8_t> buffer(1u << 20);
     for (const auto& map : maps) {
         if (map.perms[0] != 'r' || map.perms[1] != 'w' ||
@@ -309,7 +327,10 @@ bool ResolvePhysicsContext(pid_t pid, int mem, std::uintptr_t base,
             const ssize_t got = pread(mem, buffer.data(), want,
                                       static_cast<off_t>(cursor));
             if (got <= 0) {
-                cursor += want;
+                // One unreadable page must not hide the rest of a 1 MiB chunk.
+                ++read_failures;
+                cursor += std::min<std::uintptr_t>(
+                    page_size - cursor % page_size, map.end - cursor);
                 continue;
             }
             for (std::size_t offset = 0;
@@ -319,6 +340,7 @@ bool ResolvePhysicsContext(pid_t pid, int mem, std::uintptr_t base,
                 std::uintptr_t value = 0;
                 std::memcpy(&value, buffer.data() + offset, sizeof(value));
                 if (value != expected_vtable) continue;
+                ++hits;
                 const std::uintptr_t candidate = cursor + offset;
                 std::uintptr_t adapter = 0, world = 0;
                 if (ValidatePhysicsContext(mem, maps, base, candidate,
@@ -332,8 +354,8 @@ bool ResolvePhysicsContext(pid_t pid, int mem, std::uintptr_t base,
     candidates.erase(std::unique(candidates.begin(), candidates.end()),
                      candidates.end());
     if (candidates.size() != 1) {
-        std::fprintf(stderr, "PhysicsContext candidates=%zu; require 1\n",
-                     candidates.size());
+        std::fprintf(stderr, "PhysicsContext candidates=%zu; require 1; vtable_hits=%zu read_failures=%zu\n",
+                     candidates.size(), hits, read_failures);
         return false;
     }
     if (!ValidatePhysicsContext(mem, maps, base, candidates.front(),

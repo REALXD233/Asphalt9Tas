@@ -52,6 +52,7 @@ public final class MainActivity extends Activity {
     private Spinner recordingSortSpinner;
     private Spinner controlModeSpinner;
     private Spinner replaySpeedSpinner;
+    private Spinner recordTickRateSpinner;
     private EditText titleInput;
     private EditText mapInput;
     private EditText carInput;
@@ -184,6 +185,7 @@ public final class MainActivity extends Activity {
                 replayButton.setEnabled(licensed && prepared && !active &&
                         !branchPending && !recoveryRequired && !recordings.isEmpty());
                 replaySpeedSpinner.setEnabled(!active && !branchPending);
+                recordTickRateSpinner.setEnabled(!active && !branchPending);
                 branchRecordButton.setEnabled(licensed && prepared && !active &&
                         !recoveryRequired && !recordings.isEmpty());
                 branchRecordButton.setText(branchPending ?
@@ -247,6 +249,7 @@ public final class MainActivity extends Activity {
         recordingSortSpinner = findViewById(R.id.recordingSortSpinner);
         controlModeSpinner = findViewById(R.id.controlModeSpinner);
         replaySpeedSpinner = findViewById(R.id.replaySpeedSpinner);
+        recordTickRateSpinner = findViewById(R.id.recordTickRateSpinner);
         titleInput = findViewById(R.id.titleInput);
         mapInput = findViewById(R.id.mapInput);
         carInput = findViewById(R.id.carInput);
@@ -303,6 +306,10 @@ public final class MainActivity extends Activity {
         operationProgressText = findViewById(R.id.operationProgressText);
         recordingDetailText = findViewById(R.id.recordingDetailText);
         libraryCountText = findViewById(R.id.libraryCountText);
+        // Page containers preserve all existing controls, listeners and edit values.
+        setupExpanded = true;
+        new TasPageNavigation(this, uiLicenseStatus().valid &&
+                getSharedPreferences("session", MODE_PRIVATE).getBoolean("prepared_ready", false));
         setupToggleButton.setOnClickListener(view -> {
             setupExpanded = !setupExpanded;
             view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP);
@@ -348,6 +355,24 @@ public final class MainActivity extends Activity {
                 android.R.layout.simple_spinner_dropdown_item,
                 new String[]{"1× 标准", "2×", "4×", "8×"}));
         final int[] replaySpeedValues = {1, 2, 4, 8};
+        final int[] recordTickRates = {60, 120, 144};
+        recordTickRateSpinner.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item,
+                new String[]{"60 Tick/s · 16.667 ms", "120 Tick/s · 8.333 ms（实验）",
+                        "144 Tick/s · 6.944 ms（实验）"}));
+        int savedRate = getSharedPreferences("session", MODE_PRIVATE)
+                .getInt("record_tick_hz", 60);
+        recordTickRateSpinner.setSelection(savedRate == 120 ? 1 : savedRate == 144 ? 2 : 0);
+        recordTickRateSpinner.setOnItemSelectedListener(
+                new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent,
+                                                  View view, int position, long id) {
+                getSharedPreferences("session", MODE_PRIVATE).edit()
+                        .putInt("record_tick_hz", recordTickRates[
+                                Math.max(0, Math.min(2, position))]).apply();
+            }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
         int savedReplaySpeed = getSharedPreferences("session", MODE_PRIVATE)
                 .getInt("replay_speed_factor", 1);
         int savedReplaySpeedIndex = 0;
@@ -1176,9 +1201,7 @@ public final class MainActivity extends Activity {
                 artifactRegistry == null ? null :
                         artifactRegistry.findExperimental(candidate.hostMachine, candidate.bridgeSet);
         boolean canAutogenerate = candidate.startTicks > 0 && candidate.profile == null &&
-                "arm64".equals(candidate.hostMachine) && !candidate.nativeBridge &&
-                "none".equals(candidate.bridgeSet) && autogenBackend != null &&
-                autogenBackend.profileAutogenDeviceName != null;
+                Arm64ProfileAutoGenerator.supports(candidate, autogenBackend);
         generateProfileButton.setEnabled(canAutogenerate);
         // Experimental selection is a fallback for an unknown build/runtime.
         // Never let a stale spinner choice override a build that the current
@@ -1547,9 +1570,48 @@ public final class MainActivity extends Activity {
     }
 
     private void chooseImportSource() {
+        new AlertDialog.Builder(this).setTitle("导入录像")
+                .setItems(new String[]{"浏览 Documents／Download（Root）", "系统文件选择器"},
+                        (dialog, which) -> {
+                            if (which == 0) chooseSharedRecording();
+                            else chooseSystemImportSource();
+                        }).show();
+    }
+
+    private void chooseSharedRecording() {
+        importButton.setEnabled(false);
+        statusText.setText("正在读取 Documents／Download…");
+        new Thread(() -> {
+            try {
+                List<String> files = SharedRecordingBrowser.list();
+                runOnUiThread(() -> {
+                    importButton.setEnabled(true);
+                    if (isFinishing() || isDestroyed()) return;
+                    if (files.isEmpty()) {
+                        statusText.setText("未找到录像：请把 .a9tas 文件放在 Documents 或 Download 目录内（非子文件夹）");
+                        return;
+                    }
+                    String[] names = new String[files.size()];
+                    for (int i = 0; i < files.size(); i++) names[i] = files.get(i).substring(8);
+                    statusText.setText("请选择要导入的录像");
+                    new AlertDialog.Builder(this).setTitle("共享目录录像（最多200项）")
+                            .setItems(names, (dialog, which) -> importRecording(null, files.get(which)))
+                            .setNegativeButton("取消", null).show();
+                });
+            } catch (Exception error) {
+                reportUiFailure("RECORDING_BROWSE", error);
+                runOnUiThread(() -> {
+                    importButton.setEnabled(true);
+                    statusText.setText("读取目录失败 · " + message(error));
+                });
+            }
+        }, "a9tas-recording-browse").start();
+    }
+
+    private void chooseSystemImportSource() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
                 .addCategory(Intent.CATEGORY_OPENABLE)
-                .setType("application/octet-stream")
+                .setType("*/*")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         startActivityForResult(intent, REQUEST_IMPORT_RECORDING);
     }
@@ -1667,12 +1729,18 @@ public final class MainActivity extends Activity {
     }
 
     private void importSelectedDocument(Uri source) {
+        importRecording(source, null);
+    }
+
+    private void importRecording(Uri source, String sharedPath) {
         DiagnosticBundle.beginOperation(this, "RECORDING_IMPORT");
         importButton.setEnabled(false);
         statusText.setText("IMPORTING · copying and strictly validating A9TAS1…");
         new Thread(() -> {
             try {
-                A9TasLibrary.Entry imported = RecordingImporter.importArchive(this, source);
+                A9TasLibrary.Entry imported = sharedPath == null
+                        ? RecordingImporter.importArchive(this, source)
+                        : SharedRecordingBrowser.importFile(this, sharedPath);
                 getSharedPreferences("session", MODE_PRIVATE).edit()
                         .putString("latest_archive", imported.file.getAbsolutePath())
                         .putString("latest_archive_sha", imported.archiveSha256)
@@ -2208,6 +2276,8 @@ public final class MainActivity extends Activity {
         setupToggleButton.setEnabled(!operationActive);
         setupToggleButton.setText(setupExpanded ? "收起游戏与许可设置" :
                 "更换游戏或管理许可");
+        // Settings now has a permanent navigation tab, including during operations.
+        setupToggleButton.setVisibility(View.GONE);
     }
 
     /**

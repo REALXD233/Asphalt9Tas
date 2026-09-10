@@ -229,10 +229,20 @@ inline bool ResolveCountdownObject(pid_t pid, int mem, std::uintptr_t base,
     for (std::uintptr_t cursor = mapping.begin; cursor < mapping.end;) {
       const std::size_t size = static_cast<std::size_t>(
           std::min<std::uintptr_t>(kChunkSize, mapping.end - cursor));
-      if (!ReadExact(mem, cursor, buffer.data(), size)) break;
-      result.scanned_bytes += size;
+      // One unreadable page in an advertised private mapping must not hide
+      // every later race object (seen on virtualized Android memory layouts).
+      // Retry at page granularity, then advance past just the unreadable page.
+      std::size_t readable_size = size;
+      if (!ReadExact(mem, cursor, buffer.data(), readable_size)) {
+        readable_size = std::min<std::size_t>(4096, size);
+        if (!ReadExact(mem, cursor, buffer.data(), readable_size)) {
+          cursor += readable_size;
+          continue;
+        }
+      }
+      result.scanned_bytes += readable_size;
       for (std::size_t offset = 0;
-           offset + sizeof(std::uintptr_t) <= size;
+           offset + sizeof(std::uintptr_t) <= readable_size;
            offset += sizeof(std::uintptr_t)) {
         std::uintptr_t vptr = 0;
         std::memcpy(&vptr, buffer.data() + offset, sizeof(vptr));
@@ -247,7 +257,7 @@ inline bool ResolveCountdownObject(pid_t pid, int mem, std::uintptr_t base,
         ++result.countdown_candidates;
         if (result.countdown_candidates == 1) result.selected = candidate;
       }
-      cursor += size;
+      cursor += readable_size;
     }
   }
   *output = result;

@@ -17,6 +17,8 @@ final class RootShell {
     private static Process persistentProcess;
     private static BufferedWriter persistentInput;
     private static LinkedBlockingQueue<String> persistentOutput;
+    // Identity-only sentinel: child output cannot impersonate reader EOF.
+    private static final String OUTPUT_ENDED = new String("a9tas-reader-ended");
     static final class Result {
         final int exitCode;
         final List<String> output;
@@ -35,6 +37,12 @@ final class RootShell {
 
     static synchronized Result runFixedScript(String script, long timeoutSeconds)
             throws IOException, InterruptedException {
+        return runFixedScript(script, timeoutSeconds, "root-script");
+    }
+
+    static synchronized Result runFixedScript(String script, long timeoutSeconds,
+                                              String phase)
+            throws IOException, InterruptedException {
         long started = android.os.SystemClock.elapsedRealtime();
         ensurePersistentSession();
         String nonce = UUID.randomUUID().toString().replace("-", "");
@@ -52,18 +60,22 @@ final class RootShell {
             long remaining = deadline - System.nanoTime();
             if (remaining <= 0) {
                 abortPersistent();
-                return finish(-1, lines, true, started);
+                return finish(-1, lines, true, started, phase);
             }
             String line = persistentOutput.poll(remaining, TimeUnit.NANOSECONDS);
+            if (line == OUTPUT_ENDED) {
+                closePersistent();
+                return finish(255, lines, false, started, phase);
+            }
             if (line == null) {
                 abortPersistent();
-                return finish(-1, lines, true, started);
+                return finish(-1, lines, true, started, phase);
             }
             if (!began) {
                 if (line.equals(begin)) began = true;
                 else if (!processAlive(persistentProcess)) {
                     closePersistent();
-                    return finish(255, lines, false, started);
+                    return finish(255, lines, false, started, phase);
                 }
                 continue;
             }
@@ -72,17 +84,17 @@ final class RootShell {
                 int code;
                 try { code = Integer.parseInt(raw); }
                 catch (NumberFormatException error) { code = 255; }
-                return finish(code, lines, false, started);
+                return finish(code, lines, false, started, phase);
             }
             lines.add(line);
         }
     }
 
     private static Result finish(int exitCode, List<String> lines, boolean timedOut,
-                                 long startedElapsed) {
+                                 long startedElapsed, String phase) {
         long duration = Math.max(0L,
                 android.os.SystemClock.elapsedRealtime() - startedElapsed);
-        DiagnosticBundle.recordRootReceipt(exitCode, timedOut, lines.size(), duration);
+        DiagnosticBundle.recordRootReceipt(exitCode, timedOut, lines.size(), duration, phase);
         return new Result(exitCode, lines, timedOut);
     }
 
@@ -95,17 +107,23 @@ final class RootShell {
                 persistentProcess.getOutputStream(), StandardCharsets.UTF_8));
         Process processForReader = persistentProcess;
         LinkedBlockingQueue<String> outputForReader = persistentOutput;
-        Thread reader = new Thread(() -> {
+        Thread reader = new Thread(() -> pumpOutput(processForReader, outputForReader),
+                "a9tas-persistent-root-output");
+        reader.setDaemon(true);
+        reader.start();
+    }
+
+    private static void pumpOutput(Process processForReader,
+                                   LinkedBlockingQueue<String> outputForReader) {
             try (BufferedReader input = new BufferedReader(new InputStreamReader(
                     processForReader.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = input.readLine()) != null) outputForReader.offer(line);
             } catch (IOException ignored) {
-                // Command side observes process death or timeout and returns fail-closed.
+                // Notify the waiter immediately, including failures before BEGIN.
+            } finally {
+                outputForReader.offer(OUTPUT_ENDED);
             }
-        }, "a9tas-persistent-root-output");
-        reader.setDaemon(true);
-        reader.start();
     }
 
     /**

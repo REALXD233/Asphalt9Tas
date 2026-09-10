@@ -27,10 +27,9 @@ inline constexpr std::uintptr_t kFinalWriterRva = 0x367D66C;
 inline constexpr std::uintptr_t kFrameEventRva = 0x38B78E4;
 inline constexpr std::uintptr_t kFrameEventSchedulerReturnRva = 0x3794C78;
 // G8 lifecycle recordings must not inherit the historical 900-tick Gate
-// capacity.  7200 authoritative ticks cover a two-minute 60 Hz race while
-// keeping the complete diagnostic state comfortably below the controller's
-// stack budget.
-inline constexpr std::uint32_t kMaximumNeutralReceipts = 7200;
+// capacity. 24000 ticks cover more than 150 seconds even at 6944 us (144Hz).
+// Controllers keep complete diagnostic snapshots on the heap, not the stack.
+inline constexpr std::uint32_t kMaximumNeutralReceipts = 24000;
 
 enum class Result : std::int32_t {
   kObserved = 1,
@@ -90,7 +89,7 @@ struct State {
 
 // Receipt slots are authoritative only below receipt_count, and OnTickEnd
 // overwrites the complete TickScratch before incrementing that count.  Do not
-// clear the full 7200-slot capacity inside a bounded NativeBridge command.
+// clear the full capacity inside a bounded NativeBridge command.
 // Reset only session metadata; stale unreachable slots remain non-authoritative.
 inline void ResetSessionMetadata(State* state) noexcept {
   state->coordinator = {};

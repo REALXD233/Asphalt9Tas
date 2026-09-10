@@ -106,6 +106,16 @@ final class ArtifactDeployer {
         boolean privatePayload = "target_app_cache".equals(backend.payloadStaging);
         if (privatePayload) {
             String localPayload = "/data/local/tmp/" + backend.payloadDeviceName;
+            String reportedDataDir = null;
+            int reportedUid = -1;
+            try {
+                android.content.pm.ApplicationInfo info = context.getPackageManager()
+                        .getApplicationInfo(pkg, 0);
+                reportedDataDir = info.dataDir;
+                reportedUid = info.uid;
+            } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {
+                // Root-discovered games may not be visible to PackageManager.
+            }
             script.append("echo G10_STAGE target_private_payload;")
                     .append("[ -r /proc/").append(selected.pid).append("/status ];")
                     .append("old_st=$(sed 's/^[^)]*) //' /proc/").append(selected.pid)
@@ -114,29 +124,12 @@ final class ArtifactDeployer {
                     .append("uid=; while read key first rest; do case \"$key\" in Uid:) uid=$first; break;; esac; done </proc/")
                     .append(selected.pid).append("/status; case \"$uid\" in ''|*[!0-9]*) exit 73;; esac;")
                     .append("echo G10_STAGE private_identity_bound;")
-                    .append("user=$((uid / 100000)); logical_app_data=/data/user/$user/")
-                    .append(pkg).append("; stage_app_data=\"$logical_app_data\";")
-                    // Some rooted/virtualized Android builds put su in a mount
-                    // namespace that cannot see /data/user directly even though
-                    // the selected game process can.  /proc/<pid>/root exposes
-                    // that exact process view.  Use it only for staging; the
-                    // carrier/new game process must still receive the logical
-                    // app-visible pathname.
-                    .append("if [ ! -d \"$stage_app_data\" ] && [ -d /proc/")
-                    .append(selected.pid).append("/root$logical_app_data ]; then ")
-                    .append("stage_app_data=/proc/").append(selected.pid)
-                    .append("/root$logical_app_data; fi;")
-                    .append("if [ ! -d \"$stage_app_data\" ]; then ")
-                    .append("logical_app_data=/data/data/").append(pkg)
-                    .append("; stage_app_data=\"$logical_app_data\"; fi;")
-                    .append("if [ ! -d \"$stage_app_data\" ] && [ -d /proc/")
-                    .append(selected.pid).append("/root$logical_app_data ]; then ")
-                    .append("stage_app_data=/proc/").append(selected.pid)
-                    .append("/root$logical_app_data; fi; [ -d \"$stage_app_data\" ];")
+                    .append(PrivatePayloadPaths.resolveScript(selected.pid, pkg, reportedDataDir, reportedUid))
                     .append("stage_app_cache=\"$stage_app_data/cache\"; ")
                     .append("logical_app_cache=\"$logical_app_data/cache\"; ")
-                    .append("mkdir -p \"$stage_app_cache\";")
-                    .append("chown $uid:$uid \"$stage_app_cache\"; chmod 0771 \"$stage_app_cache\";")
+                    .append("mkdir -p \"$stage_app_cache\" || { echo G10_ERROR private_cache_mkdir_failed; exit 73; };")
+                    .append("chown $uid:$uid \"$stage_app_cache\" || { echo G10_ERROR private_cache_chown_failed; exit 73; };")
+                    .append("chmod 0771 \"$stage_app_cache\" || { echo G10_ERROR private_cache_chmod_failed; exit 73; };")
                     .append("echo G10_STAGE private_cache_ready;")
                     .append("stage_payload_dir=\"$stage_app_cache/a9tas\"; ")
                     .append("stage_payload_target=\"$stage_payload_dir/")

@@ -1179,24 +1179,21 @@ public final class TasForegroundService extends Service {
                 updateNotification("后段已自动丢弃 · 原主分支保留", false);
                 return;
             }
+            // The suffix has finished: its old replay breakpoint is consumed,
+            // even if packaging below fails. Keep the archive/selection, not a
+            // stale promise that rearm-branch can resume the previous race.
+            clearPendingBranch(preferences);
+            preferences.edit().putBoolean("branch_replay_ready", false)
+                    .putBoolean("branch_runtime_prearmed", false).apply();
             A9TasLibrary.Entry branch = A9TasBranchEditor.adoptContinuous(
                     this, base, target, suffix.file, suffix.sha256);
             long prefixTicks = target + 1L;
             long newlyRecordedTicks = suffix.ticks - prefixTicks;
-            preferences.edit()
+            android.content.SharedPreferences.Editor branchSaved = preferences.edit()
                     .putString("latest_archive", branch.file.getAbsolutePath())
                     .putString("latest_archive_sha", branch.archiveSha256)
                     .putString("latest_archive_id",
                             branch.summary.manifest.getString("recording_id"))
-                    // The accepted branch is the next iteration's main line.
-                    // Keep the old archive immutable in the library, but make
-                    // the new archive the active selection and reset its
-                    // default replay/trim cursor to the new final tick.
-                    .putString("selected_archive", branch.file.getAbsolutePath())
-                    .putString("selected_archive_sha", branch.archiveSha256)
-                    .putString("selected_archive_title", branch.title())
-                    .putLong("replay_target_tick", branch.summary.targetTick)
-                    .putString("replay_target_archive_sha", branch.archiveSha256)
                     .remove("latest_recording")
                     .remove("latest_recording_sha")
                     .remove("latest_recording_ticks")
@@ -1205,8 +1202,18 @@ public final class TasForegroundService extends Service {
                     // draft no longer exists and must not remain visible in UI.
                     .remove("attempt_draft_path")
                     .remove("attempt_draft_sha")
-                    .remove("attempt_draft_ticks")
-                    .apply();
+                    .remove("attempt_draft_ticks");
+            // An explicit paused save accepts a new prefix. Crossing the
+            // finish line only archives a candidate: Retry must still replay
+            // the user's chosen prefix/target, at their selected replay speed.
+            if (suffix.checkpoint) {
+                branchSaved.putString("selected_archive", branch.file.getAbsolutePath())
+                        .putString("selected_archive_sha", branch.archiveSha256)
+                        .putString("selected_archive_title", branch.title())
+                        .putLong("replay_target_tick", branch.summary.targetTick)
+                        .putString("replay_target_archive_sha", branch.archiveSha256);
+            }
+            branchSaved.apply();
             if (suffix.archive != null && suffix.archive.isFile()) {
                 try {
                     A9TasLibrary.Entry suffixEntry = new A9TasLibrary.Entry(suffix.archive,
@@ -1230,8 +1237,8 @@ public final class TasForegroundService extends Service {
                 SessionOrchestrator.OperationObserver nextObserver = observer("branch");
                 if (preferences.getBoolean("continuous_load_selected", false)) {
                     setState("RETRY_QUEUED",
-                            "新主分支前缀已常驻排队 · 回到游戏直接 Retry");
-                    updateNotification("新主分支已排队 · 直接 Retry", true);
+                            "按所选存档、Tick 和回放倍速准备下一局 · 回到游戏直接 Retry");
+                    updateNotification("所选前缀已排队 · 直接 Retry", true);
                     SessionOrchestrator.ReplayReceipt replay =
                             SessionOrchestrator.queueNextRacePrefix(
                                     this, nextObserver);

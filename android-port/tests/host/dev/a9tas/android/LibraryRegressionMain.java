@@ -27,9 +27,46 @@ public final class LibraryRegressionMain {
         testRootOwnership();
         Path root = Path.of(args[1]);
         Context context = new Context(root.toFile());
+        var session = context.getSharedPreferences("session", 0);
+        session.edit().putBoolean("prepared_ready", true)
+                .putBoolean("session_hooks_installed", true).putInt("prepared_pid", 5165)
+                .putBoolean("resident_retry_auto_loop", true)
+                .putString("selected_archive", "keep-me.a9tas").commit();
+        var clear = SessionOrchestrator.class.getDeclaredMethod("clearTerminatedRuntimeState", Context.class);
+        clear.setAccessible(true);
+        clear.invoke(null, context);
+        check(!session.getBoolean("prepared_ready", true), "dead process no longer prepared");
+        check(!session.getBoolean("session_hooks_installed", true), "dead hooks no longer installed");
+        check(!session.getBoolean("resident_retry_auto_loop", true), "dead retry not armed");
+        check(session.getString("selected_archive", "").equals("keep-me.a9tas"), "recording selection survives cleanup");
+        check(SessionOrchestrator.objectFailureDetails("G4_OBJECT_DIAG lifecycle=0 scanned=123\n" + "x".repeat(700))
+                .contains("scanned=123"), "object diagnostic survives tail truncation");
         Files.createDirectories(root.resolve("recordings"));
+        String runtimeFault = SessionOrchestrator.runtimeFailureDetails(
+                "G4_STATUS complete=0 ticks=0 begin=1 interval=0 final=1 end=0 "
+                + "error=13 coordinator_result=-6 fault_context=0x200000001 fault_tick=0 "
+                + "x".repeat(6000) + " control=0,0");
+        check(runtimeFault.contains("coordinator_result=-6")
+                && runtimeFault.contains("fault_context=0x200000001")
+                && runtimeFault.contains("interval=0"), "runtime fault origin survives truncation");
+        check(runtimeFault.length() < 4096 && runtimeFault.contains("control=0,0"),
+                "runtime failure detail is bounded and retains tail");
         Files.createDirectories(root.resolve("drafts"));
         byte[] archive = Files.readAllBytes(Path.of(args[0]));
+        Context importContext = new Context(root.resolve("import-tests").toFile());
+        A9TasLibrary.Entry imported = RecordingImporter.importStream(importContext,
+                new java.io.ByteArrayInputStream(archive));
+        check(imported.file.isFile(), "shared stream import publishes archive");
+        check(RecordingImporter.importStream(importContext,
+                new java.io.ByteArrayInputStream(archive)).file.equals(imported.file),
+                "identical archive reimport is idempotent");
+        rejects(() -> RecordingImporter.importStream(importContext,
+                new java.io.ByteArrayInputStream(new byte[160])), "invalid shared import rejected");
+        check(SharedRecordingBrowser.allowed("/sdcard/Documents/friend.a9tas"), "Documents import allowed");
+        check(SharedRecordingBrowser.allowed("/sdcard/Download/friend.A9TAS"), "Download extension case");
+        check(!SharedRecordingBrowser.allowed("/sdcard/Documents/../secret.a9tas"), "no traversal");
+        check(!SharedRecordingBrowser.allowed("/data/local/tmp/file.a9tas"), "bounded shared roots");
+        check(!SharedRecordingBrowser.allowed("/sdcard/Documents/a\nb.a9tas"), "no multiline path");
         int offset = A9TasArchive.HEADER_SIZE +
                 ByteBuffer.wrap(archive).order(ByteOrder.LITTLE_ENDIAN).getInt(20);
         byte[] raw = Arrays.copyOfRange(archive, offset, archive.length);
@@ -45,6 +82,64 @@ public final class LibraryRegressionMain {
                 game.getString("build_profile_sha256"), race.getString("map"),
                 race.getString("car"), race.getString("control_mode"), "");
         var entry = A9TasLibrary.pack(context, source.toFile(), hash, metadata);
+        {
+            final int count = 24000, step = 6944;
+            Context longContext = new Context(root.resolve("long-144").toFile());
+            byte[] full = new byte[64 + count * (144 + 16)];
+            System.arraycopy(raw, 0, full, 0, 64);
+            ByteBuffer lb = ByteBuffer.wrap(full).order(ByteOrder.LITTLE_ENDIAN);
+            lb.putInt(24, count); lb.putInt(28, count); lb.putInt(32, step);
+            for (int i = 0; i < count; i++) {
+                int frame = 64 + i * 144;
+                System.arraycopy(raw, 64, full, frame, 144);
+                lb.putLong(frame, i); lb.putLong(frame + 8, i * (long) step * 1000);
+                int interval = 64 + count * 144 + i * 16;
+                System.arraycopy(raw, 64 + 3 * 144, full, interval, 16);
+                lb.putLong(interval, i); lb.putInt(interval + 8, 0);
+            }
+            Path longRaw = root.resolve("long-144/recordings/recording-1-24000.a9g4r2");
+            Files.createDirectories(longRaw.getParent()); Files.write(longRaw, full);
+            String longSha = A9TasLibrary.sha256(longRaw.toFile());
+            var longEntry = A9TasLibrary.pack(longContext, longRaw.toFile(), longSha, metadata);
+            check(longEntry.summary.frameCount == count, "24000-tick archive roundtrip");
+            check((count - 1L) * step > 150_000_000L, "144Hz exceeds 150 seconds");
+            var longPrefix = A9TasLibrary.materializeReplaySource(longContext, longEntry, 22000);
+            check(A9TasArchive.inspectSource(longPrefix).frameCount == 22001,
+                    "prefix past old 7200/16384 limits");
+            Path longDraft = root.resolve("long-144/drafts/attempt-1-24000.a9g4r2");
+            Files.createDirectories(longDraft.getParent()); Files.write(longDraft, full);
+            var longBranch = A9TasBranchEditor.adoptContinuous(longContext, longEntry,
+                    22000, longDraft.toFile(), longSha);
+            check(longBranch.summary.frameCount == count &&
+                    longBranch.summary.recordingSha256.equals(longSha),
+                    "long branch preserves all source ticks");
+        }
+        for (int step : new int[]{8333, 6944}) {
+            Context highContext = new Context(root.resolve("hz-" + step).toFile());
+            byte[] high = raw.clone();
+            ByteBuffer hb = ByteBuffer.wrap(high).order(ByteOrder.LITTLE_ENDIAN);
+            hb.putInt(32, step);
+            for (int i = 0; i < 3; i++)
+                hb.putLong(64 + i * 144 + 8, i * (long)step * 1000L);
+            Path highRaw = root.resolve("hz-" + step + "/recordings/recording-1-3.a9g4r2");
+            Files.createDirectories(highRaw.getParent());
+            Files.write(highRaw, high);
+            String highSha = A9TasLibrary.sha256(highRaw.toFile());
+            var highEntry = A9TasLibrary.pack(highContext, highRaw.toFile(), highSha, metadata);
+            check(highEntry.summary.fixedDeltaUs == step, "high-rate archive retains timestep");
+            var trimmed = A9TasLibrary.materializeReplaySource(highContext, highEntry, 1);
+            var trimmedSummary = A9TasArchive.inspectSource(trimmed);
+            check(trimmedSummary.fixedDeltaUs == step && trimmedSummary.frameCount == 2,
+                    "high-rate prefix preserves timestep and length");
+            Path highDraft = root.resolve("hz-" + step + "/drafts/attempt-1-3.a9g4r2");
+            Files.createDirectories(highDraft.getParent());
+            Files.write(highDraft, high);
+            var adoptedHigh = A9TasBranchEditor.adoptContinuous(highContext, highEntry,
+                    0, highDraft.toFile(), highSha);
+            check(adoptedHigh.summary.fixedDeltaUs == step &&
+                    adoptedHigh.summary.recordingSha256.equals(highSha),
+                    "high-rate continuation preserves timeline bytes");
+        }
         check(entry.archiveSha256.equals(A9TasLibrary.sha256(entry.file)), "streamed archive digest");
         check(entry.summary.recordingSha256.equals(hash), "source digest unchanged");
         check(A9TasLibrary.list(context).valid.get(0) == entry, "warm listing cache reused");

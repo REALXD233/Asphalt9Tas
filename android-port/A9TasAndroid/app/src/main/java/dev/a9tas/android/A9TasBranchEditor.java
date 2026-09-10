@@ -14,7 +14,7 @@ import java.nio.ByteOrder;
 
 /** Immutable prefix/branch editing for the canonical A9G4R2 recording stream. */
 final class A9TasBranchEditor {
-    private static final int MAX_FRAMES = 7200;
+    private static final int MAX_FRAMES = 24000;
 
     private A9TasBranchEditor() {}
 

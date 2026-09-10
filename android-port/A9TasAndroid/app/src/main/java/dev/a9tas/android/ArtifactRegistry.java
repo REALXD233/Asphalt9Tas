@@ -249,8 +249,9 @@ final class ArtifactRegistry {
             String bootstrap = optionalRole(roles, "bootstrap");
             String practiceProbe = role(roles, "practice_probe");
             String profileAutogen = optionalRole(roles, "profile_autogen");
-            if (profileAutogen != null && !machine.equals("arm64"))
-                throw new IOException("Profile autogen is only valid for native ARM64");
+            if (profileAutogen != null && !machine.equals("arm64") &&
+                    !machine.equals("x86_64"))
+                throw new IOException("Profile autogen executable host is unsupported");
             JSONArray array = item.getJSONArray("artifacts");
             if (array.length() == 0) throw new IOException("empty backend artifact set: " + id);
             List<Artifact> artifacts = new ArrayList<>();

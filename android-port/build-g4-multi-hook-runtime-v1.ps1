@@ -320,9 +320,16 @@ if ($asm -notmatch '(?s)<G4BarrelRollEntryV1>:.{0,2400}?bl\s+0x[0-9a-f]+\s+<G4Ba
     $asm -notmatch '(?s)<G4BarrelYawEntryV1>:.{0,2400}?bl\s+0x[0-9a-f]+\s+<G4BarrelYawOriginalV1>.{0,2400}?bl\s+0x[0-9a-f]+\s+<G4BarrelYawAfterV1>') {
     throw 'G6 barrel hooks do not preserve original-before-tail order'
 }
-if ($asm -notmatch '(?s)<G4DispatcherEntryV1>:.{0,5000}?bl\s+0x[0-9a-f]+\s+<G4DispatcherOriginalV1>') {
+$dispatcherBody = [regex]::Match($asm,
+    '(?ms)^[0-9a-f]+ <G4DispatcherEntryV1>:\r?\n(?<body>.*?)(?=^[0-9a-f]+ <|\z)')
+if (-not $dispatcherBody.Success -or $dispatcherBody.Groups['body'].Value -notmatch
+    'bl\s+0x[0-9a-f]+\s+<G4DispatcherOriginalV1>') {
     throw 'Fast replay dispatcher does not repeat the exact original complete-logic method'
 }
+& $compiler -std=c++17 -fsyntax-only (Join-Path $portRoot 'tests/realtime_tick_budget_test.cpp')
+if ($LASTEXITCODE -ne 0) { throw 'Real-time tick budget constexpr regression failed' }
+& $compiler -std=c++20 -fsyntax-only (Join-Path $portRoot 'tests/long_recording_capacity_test.cpp')
+if ($LASTEXITCODE -ne 0) { throw 'Long recording capacity regression failed' }
 foreach ($token in @('OnBarrelRollPostOriginal', 'OnBarrelYawPostOriginal',
                       'kSkipBarrelRbx', 'kSkipBarrelAngular',
                       'CopyBits(live_bits, target_bits)')) {

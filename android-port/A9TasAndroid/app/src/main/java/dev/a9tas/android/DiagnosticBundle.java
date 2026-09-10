@@ -119,6 +119,11 @@ final class DiagnosticBundle {
 
     static void recordRootReceipt(int exitCode, boolean timedOut,
                                   int outputLineCount, long durationMs) {
+        recordRootReceipt(exitCode, timedOut, outputLineCount, durationMs, "root-script");
+    }
+
+    static void recordRootReceipt(int exitCode, boolean timedOut,
+                                  int outputLineCount, long durationMs, String phase) {
         Context context = applicationContext;
         if (context == null) return;
         try {
@@ -127,6 +132,8 @@ final class DiagnosticBundle {
             entry.put("timed_out", timedOut);
             entry.put("output_lines", outputLineCount);
             entry.put("duration_ms", durationMs);
+            entry.put("phase", phase != null && phase.matches("[a-z0-9-]{1,80}")
+                    ? phase : "root-script");
             appendJournal(context, entry.toString() + "\n");
         } catch (Exception ignored) {}
     }
@@ -224,6 +231,14 @@ final class DiagnosticBundle {
         app.put("package", context.getPackageName());
         app.put("version_code", info.versionCode);
         app.put("version_name", info.versionName == null ? "" : info.versionName);
+        // Repeated maintenance APKs can share a versionCode. Hash only our APK
+        // at export time so a performance report identifies the installed build.
+        try {
+            app.put("apk_sha256", sha256(new FileInputStream(
+                    context.getApplicationInfo().sourceDir)));
+        } catch (Exception unavailable) {
+            app.put("apk_sha256", "unavailable");
+        }
         app.put("pid", Process.myPid());
         root.put("app", app);
         JSONObject device = new JSONObject();
