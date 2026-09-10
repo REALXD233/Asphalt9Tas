@@ -115,6 +115,20 @@ bool RunTwoTicks() {
           &submit) != bridge::Result::kObserved ||
       !submit.first_call_in_tick || submit.decision.replay_nitro_calls != 2)
     return false;
+  // Reproduce error=13 / hook=FinalWriter / phase=Begun / intervals=0.
+  // Early player returns must not capture/correct state or consume tick zero.
+  for (unsigned repeat = 0; repeat < 3; ++repeat) {
+    if (bridge::ObserveFinalWriterReturn(
+            config, &state, player, config.tick.expected_player_vptr, 72) !=
+            bridge::Result::kIgnored ||
+        !state.input_action.tick_open || state.receipt_count != 0 ||
+        state.tick.coordinator.tick != 0 ||
+        state.tick.coordinator.physics_interval_calls != 0 ||
+        state.tick.coordinator.failures != 0 ||
+        state.tick.coordinator.tick_phase !=
+            a9tas::g3_tick_coordinator_v1::TickPhase::kBegun)
+      return false;
+  }
   bridge::IntervalBeforeReceiptV1 before{};
   if (bridge::ObserveIntervalBeforeOriginal(
           config, &state, physics,

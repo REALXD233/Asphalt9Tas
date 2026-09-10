@@ -41,7 +41,7 @@ if ($objectSymbols -notmatch 'a9tas_native_arm64_g4_payload_resolve_build_only_v
 
 $payloadHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $payload).Hash.ToLowerInvariant()
 $payloadSize = (Get-Item -LiteralPath $payload).Length
-if ($payloadHash -ne 'ff17fb169ec398b78e9c717374f5f9c50fca42a8479a382a8fe778397229f9c2' -or
+if ($payloadHash -ne '9748c23bc68e53b8bc05cf97f81c12a3de94ef816a5ed11b78da2c8ff62efff9' -or
     $payloadSize -ne 4145968) {
     throw 'pinned G4 payload identity drifted'
 }
@@ -88,7 +88,7 @@ if ($programHeaders -notmatch '(?m)^\s*LOAD\s+0x0166c0\s+0x00000000000226c0\s+0x
 }
 $buildIdLine = (& $readelf -n $payload | Select-String 'Build ID:' | Select-Object -Last 1).Line
 $buildId = ($buildIdLine -replace '^.*Build ID:\s*','').Trim()
-if ($buildId -ne 'f86c451bd2981c0e4db24a61a81aebaeeef169a9') {
+if ($buildId -ne '8df55885327c9f324343dbdf3cc72f1fe8b94eb4') {
     throw 'pinned G4 payload Build ID drifted'
 }
 
