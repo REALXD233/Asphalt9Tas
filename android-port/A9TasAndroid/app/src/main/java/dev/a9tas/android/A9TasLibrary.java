@@ -763,7 +763,12 @@ final class A9TasLibrary {
         long intervalOffset = A9TasArchive.A9G4R2_HEADER_SIZE +
                 summary.frameCount * A9TasArchive.A9G4R2_FRAME_SIZE;
         byte[] interval = new byte[A9TasArchive.A9G4R2_INTERVAL_SIZE];
+        boolean sparseIntervals;
         try (RandomAccessFile input = new RandomAccessFile(full, "r")) {
+            // full has already passed archive/source validation. Read its
+            // explicit format version without rescanning every frame.
+            input.seek(8);
+            sparseIntervals = Integer.reverseBytes(input.readInt()) == 4;
             input.seek(intervalOffset);
             for (long index = 0; index < summary.intervalCount; ++index) {
                 input.readFully(interval);
@@ -772,7 +777,7 @@ final class A9TasLibrary {
                 intervalCount++;
             }
         }
-        if (intervalCount == 0)
+        if (intervalCount == 0 && !sparseIntervals)
             throw new IOException("target prefix has no Physics Interval samples");
 
         File pending = new File(output.getAbsolutePath() + ".pending");

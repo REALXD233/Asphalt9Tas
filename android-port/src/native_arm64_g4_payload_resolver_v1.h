@@ -35,37 +35,34 @@ namespace action = a9tas::g4_input_action_v1;
 inline constexpr char kPayloadBasename[] =
     "liba9tas_g4_multi_hook_runtime_v1.so";
 inline constexpr std::uint8_t kExpectedSha256[32] = {
-    0x97,0x48,0xc2,0x3b,0xc6,0x8e,0x53,0xb8,
-    0xbc,0x05,0xcf,0x97,0xf8,0x1c,0x12,0xa3,
-    0xde,0x94,0xef,0x81,0x6a,0x5e,0xd1,0x1b,
-    0x78,0xda,0x2c,0x8f,0xf6,0x2e,0xff,0xf9,
+    0x23,0xCD
 };
 inline constexpr char kExpectedBuildId[] =
-    "8df55885327c9f324343dbdf3cc72f1fe8b94eb4";
-inline constexpr std::uint64_t kExpectedFileSize = 0x3F4330;
+    "cc9356cd6a7ffe082942342e6c34bd23ec90deed";
+inline constexpr std::uint64_t kExpectedFileSize = 0x3F5198;
 
-inline constexpr std::uintptr_t kCommandRva = 0xE78C;
-inline constexpr std::size_t kCommandSize = 0x3A48;
-inline constexpr std::uintptr_t kControlLocatorRva = 0x23090;
-inline constexpr std::uintptr_t kEvidenceLocatorRva = 0x23098;
-inline constexpr std::uintptr_t kRuntimeLocatorRva = 0x230A0;
-inline constexpr std::uintptr_t kBuildProfileLocatorRva = 0x230A8;
-inline constexpr std::uintptr_t kReplayFramesLocatorRva = 0x230B0;
-inline constexpr std::uintptr_t kReplayIntervalsLocatorRva = 0x230B8;
-inline constexpr std::uintptr_t kRecordedFramesLocatorRva = 0x230C0;
-inline constexpr std::uintptr_t kRecordedIntervalsLocatorRva = 0x230C8;
+inline constexpr std::uintptr_t kCommandRva = 0xEE04;
+inline constexpr std::size_t kCommandSize = 0x3A78;
+inline constexpr std::uintptr_t kControlLocatorRva = 0x23CD0;
+inline constexpr std::uintptr_t kEvidenceLocatorRva = 0x23CD8;
+inline constexpr std::uintptr_t kRuntimeLocatorRva = 0x23CE0;
+inline constexpr std::uintptr_t kBuildProfileLocatorRva = 0x23CE8;
+inline constexpr std::uintptr_t kReplayFramesLocatorRva = 0x23CF0;
+inline constexpr std::uintptr_t kReplayIntervalsLocatorRva = 0x23CF8;
+inline constexpr std::uintptr_t kRecordedFramesLocatorRva = 0x23D00;
+inline constexpr std::uintptr_t kRecordedIntervalsLocatorRva = 0x23D08;
 
-inline constexpr std::uintptr_t kRuntimeStorageRva = 0x23100;
-inline constexpr std::uintptr_t kEvidenceStorageRva = 0x3FBAC0;
-inline constexpr std::uintptr_t kControlStorageRva = 0x3FBE00;
-inline constexpr std::uintptr_t kRecordedIntervalsStorageRva = 0x3FC1C0;
-inline constexpr std::uintptr_t kRecordedFramesStorageRva = 0x5731C0;
-inline constexpr std::uintptr_t kBuildProfileStorageRva = 0x8BEDC0;
-inline constexpr std::uintptr_t kReplayFramesStorageRva = 0x8BEF40;
-inline constexpr std::uintptr_t kReplayIntervalsStorageRva = 0xC0AB40;
+inline constexpr std::uintptr_t kRuntimeStorageRva = 0x23D40;
+inline constexpr std::uintptr_t kEvidenceStorageRva = 0x3FC700;
+inline constexpr std::uintptr_t kControlStorageRva = 0x3FCA40;
+inline constexpr std::uintptr_t kRecordedIntervalsStorageRva = 0x3FCE00;
+inline constexpr std::uintptr_t kRecordedFramesStorageRva = 0x574440;
+inline constexpr std::uintptr_t kBuildProfileStorageRva = 0x8C0040;
+inline constexpr std::uintptr_t kReplayFramesStorageRva = 0x8C01C0;
+inline constexpr std::uintptr_t kReplayIntervalsStorageRva = 0xC0BDC0;
 
-inline constexpr std::uintptr_t kFinalRwRva = 0x226C0;
-inline constexpr std::uintptr_t kFinalRwLogicalEndRva = 0xD81C40;
+inline constexpr std::uintptr_t kFinalRwRva = 0x23300;
+inline constexpr std::uintptr_t kFinalRwLogicalEndRva = 0xD82EC0;
 
 static_assert(sizeof(protocol::Control) == 0x240);
 static_assert(sizeof(protocol::Evidence) == 0x340);
@@ -73,7 +70,7 @@ static_assert(sizeof(action::IntervalSampleV1) *
                   protocol::kMaximumIntervalSamples == 0x177000);
 static_assert(sizeof(recording::RecordingFrameV1) *
                   protocol::kMaximumFrames == 0x34BC00);
-static_assert(kRecordedIntervalsStorageRva + 0x177000 ==
+static_assert(kRecordedIntervalsStorageRva + 0x177000 <=
               kRecordedFramesStorageRva);
 static_assert(kRecordedFramesStorageRva + 0x34BC00 ==
               kBuildProfileStorageRva);

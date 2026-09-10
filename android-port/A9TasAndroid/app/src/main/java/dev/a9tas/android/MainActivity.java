@@ -355,13 +355,14 @@ public final class MainActivity extends Activity {
                 android.R.layout.simple_spinner_dropdown_item,
                 new String[]{"1× 标准", "2×", "4×", "8×"}));
         final int[] replaySpeedValues = {1, 2, 4, 8};
-        final int[] recordTickRates = {60, 120, 144};
         recordTickRateSpinner.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"60 Tick/s · 16.667 ms", "120 Tick/s · 8.333 ms（实验）",
-                        "144 Tick/s · 6.944 ms（实验）"}));
+                new String[]{"60 Tick/s · 16.667 ms（默认）",
+                        "120 Tick/s · 8.333 ms（实验）", "144 Tick/s · 6.944 ms（实验）"}));
+        final int[] recordTickRates = {60, 120, 144};
         int savedRate = getSharedPreferences("session", MODE_PRIVATE)
                 .getInt("record_tick_hz", 60);
+        SessionOrchestrator.stableRecordDeltaUs(getSharedPreferences("session", MODE_PRIVATE));
         recordTickRateSpinner.setSelection(savedRate == 120 ? 1 : savedRate == 144 ? 2 : 0);
         recordTickRateSpinner.setOnItemSelectedListener(
                 new android.widget.AdapterView.OnItemSelectedListener() {
@@ -369,7 +370,7 @@ public final class MainActivity extends Activity {
                                                   View view, int position, long id) {
                 getSharedPreferences("session", MODE_PRIVATE).edit()
                         .putInt("record_tick_hz", recordTickRates[
-                                Math.max(0, Math.min(2, position))]).apply();
+                                Math.max(0, Math.min(recordTickRates.length - 1, position))]).apply();
             }
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
         });

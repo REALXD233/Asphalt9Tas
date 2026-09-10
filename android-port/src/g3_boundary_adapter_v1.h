@@ -483,7 +483,8 @@ inline Result ObserveTickBeginAndPrePhysics(
 inline Result ObserveFinalWriterReturn(const Config& config, State* state,
                                        std::uintptr_t player,
                                        std::uintptr_t player_vptr,
-                                       std::uint32_t tid) noexcept {
+                                       std::uint32_t tid,
+                                       bool completed_without_integration = false) noexcept {
   if (state == nullptr || !ConfigValid(config) || tid == 0)
     return Result::kInvalidArgument;
   if (player != config.expected_player ||
@@ -498,7 +499,8 @@ inline Result ObserveFinalWriterReturn(const Config& config, State* state,
   // boundary: leave the tick open and wait for a post-interval return. Never
   // manufacture an interval or publish/correct a frame from this callback.
   if (state->coordinator.lifecycle == coordinator::Lifecycle::kInRace &&
-      state->coordinator.tick_phase == coordinator::TickPhase::kBegun) {
+      state->coordinator.tick_phase == coordinator::TickPhase::kBegun &&
+      !completed_without_integration) {
     ++state->idle_final_writer_returns;
     return Result::kWaitingForTick;
   }
@@ -508,7 +510,8 @@ inline Result ObserveFinalWriterReturn(const Config& config, State* state,
   }
   return Core(state, coordinator::OnFinalWriter(
                          &state->coordinator, config.generation,
-                         state->coordinator.tick, tid));
+                         state->coordinator.tick, tid,
+                         completed_without_integration));
 }
 
 inline Result ObserveFrameEventReturn(const Config& config, State* state,

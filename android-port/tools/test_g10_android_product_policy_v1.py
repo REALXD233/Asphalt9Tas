@@ -107,9 +107,10 @@ def main() -> int:
             "Android launcher icon generation failed" in product_build,
             "product build does not regenerate launcher icons from its master")
     icon_builder = (ROOT / "tools/build_android_icon_v2.ps1").read_text("utf-8")
-    require("DrawString('TAS'" in icon_builder and "mark=TAS" in icon_builder and
-            "#151820" in icon_builder,
-            "minimal TAS launcher mark drifted")
+    require("a9-tas-icon-black.png" in icon_builder and "mark=A9" in icon_builder and
+            "[switch]$UseExistingMaster = $true" in icon_builder and
+            "$size * 0.15" in icon_builder,
+            "provided A9 artwork or adaptive safe inset missing")
     manifest = ET.parse(MAIN / "AndroidManifest.xml").getroot()
     android = "{http://schemas.android.com/apk/res/android}"
     application = manifest.find("application")
@@ -117,7 +118,7 @@ def main() -> int:
     require(application.get(android + "icon") == "@mipmap/ic_launcher" and
             application.get(android + "roundIcon") == "@mipmap/ic_launcher_round",
             "adaptive and round product icons are not both configured")
-    icon_master = PROJECT / "design" / "app-icon-v2-master.png"
+    icon_master = PROJECT / "design" / "a9-tas-icon-black.png"
     require(icon_master.is_file() and png_size(icon_master)[0] >= 1024 and
             png_size(icon_master)[0] == png_size(icon_master)[1],
             "high-resolution square icon master is missing")

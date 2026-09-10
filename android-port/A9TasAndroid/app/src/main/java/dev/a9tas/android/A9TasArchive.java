@@ -138,11 +138,13 @@ final class A9TasArchive {
         byte[] reserved = take(header, 8);
         boolean legacy = source.version == 2 && flags == 0x0f;
         boolean current = source.version == 3 && flags == 0x1f;
+        boolean sparse = source.version == 4 && flags == 0x3f &&
+                (source.fixedDeltaUs == 8333 || source.fixedDeltaUs == 6944);
         long expected = A9G4R2_HEADER_SIZE + source.frameCount * A9G4R2_FRAME_SIZE +
                 source.intervalCount * A9G4R2_INTERVAL_SIZE;
-        if (!(legacy || current) || headerSize != A9G4R2_HEADER_SIZE ||
+        if (!(legacy || current || sparse) || headerSize != A9G4R2_HEADER_SIZE ||
                 frameSize != A9G4R2_FRAME_SIZE || intervalSize != A9G4R2_INTERVAL_SIZE ||
-                source.frameCount == 0 || source.intervalCount == 0 ||
+                source.frameCount == 0 || (source.intervalCount == 0 && !sparse) ||
                 source.fixedDeltaUs < 1_000 || source.fixedDeltaUs > 100_000 ||
                 source.sessionId == 0 || source.generation == 0 || reserved0 != 0 ||
                 !allZero(reserved) || expected != size)
@@ -165,7 +167,7 @@ final class A9TasArchive {
                     Float.floatToRawIntBits(accelerator) != 0 || nitro > 2 ||
                     skip != (legacy ? 0x78 : 0x48) || respawn != 0 || !allZero(padding) ||
                     (legacy && (ax != 0 || ay != 0 || az != 0 || rbx0 != 0 || rbx1 != 0)) ||
-                    (current && !barrelFinite) || !finiteFloats(transform) || !finiteFloats(linear) ||
+                    ((current || sparse) && !barrelFinite) || !finiteFloats(transform) || !finiteFloats(linear) ||
                     frameFlags != 7 || frameReserved != 0)
                 fail("a9g4r2.frame." + index);
             source.nitroCalls += nitro;
@@ -188,7 +190,8 @@ final class A9TasArchive {
             if (ordinal != nextOrdinal++) fail("a9g4r2.interval_ordinal." + index);
             covered[Math.toIntExact(tick)] = true;
         }
-        for (boolean value : covered) if (!value) fail("a9g4r2.missing_tick_interval");
+        if (!sparse)
+            for (boolean value : covered) if (!value) fail("a9g4r2.missing_tick_interval");
         return source;
     }
 

@@ -1,7 +1,7 @@
 param(
-    [string]$Source = (Join-Path $PSScriptRoot '..\A9TasAndroid\design\app-icon-v2-master.png'),
+    [string]$Source = (Join-Path $PSScriptRoot '..\A9TasAndroid\design\a9-tas-icon-black.png'),
     [string]$ResRoot = (Join-Path $PSScriptRoot '..\A9TasAndroid\app\src\main\res'),
-    [switch]$UseExistingMaster
+    [switch]$UseExistingMaster = $true
 )
 
 $ErrorActionPreference = 'Stop'
@@ -90,8 +90,12 @@ function Save-ResizedForeground([string]$path, [int]$size) {
     $graphics = [System.Drawing.Graphics]::FromImage($canvas)
     try {
         Configure-Graphics $graphics
-        $graphics.Clear([System.Drawing.Color]::Transparent)
-        $graphics.DrawImage($sourceImage, 0, 0, $size, $size)
+        $graphics.Clear([System.Drawing.Color]::Black)
+        # Android may mask/zoom adaptive foregrounds. Keep the supplied mark
+        # inside the central safe area without modifying the source artwork.
+        $inset = [int][Math]::Round($size * 0.15)
+        $graphics.DrawImage($sourceImage, $inset, $inset,
+            $size - 2 * $inset, $size - 2 * $inset)
         $canvas.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
     } finally {
         $graphics.Dispose()
@@ -110,7 +114,7 @@ function Save-LegacyIcon([string]$path, [int]$size, [bool]$round) {
         New-RoundedPath $size ($size * 0.22)
     }
     $background = [System.Drawing.SolidBrush]::new(
-        [System.Drawing.ColorTranslator]::FromHtml('#151820'))
+        [System.Drawing.Color]::Black)
     try {
         Configure-Graphics $graphics
         $graphics.Clear([System.Drawing.Color]::Transparent)
@@ -143,4 +147,4 @@ try {
     $sourceImage.Dispose()
 }
 
-Write-Output "A9TAS_ANDROID_ICON_V2 passed=1 mark=TAS source=$sourcePath densities=$($densities.Count)"
+Write-Output "A9TAS_ANDROID_ICON_V2 passed=1 mark=A9 source=$sourcePath densities=$($densities.Count)"

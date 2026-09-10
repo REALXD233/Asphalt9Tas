@@ -41,6 +41,9 @@ struct ConfigV1 {
   g3::Config tick{};
   std::uint32_t fixed_delta_us{};
   g4::IntervalReplayViewV1 interval_replay{};
+  // Opt-in until the runtime bracket and sparse recording format are wired.
+  // Existing callers and archived 60-tick sessions retain strict behavior.
+  bool allow_zero_integration_updates{};
 };
 
 struct StateV1 {
@@ -65,6 +68,16 @@ struct IntervalBeforeReceiptV1 {
 };
 
 using SubmitBeforeReceiptV1 = IntervalBeforeReceiptV1;
+
+// Supplied only while executing the qualified FrameEvent whose native caller
+// has obtained the previous physics result. This is a stack/scope witness, not
+// a flag to set merely because a physics callback was absent.
+struct CompletedFrameScopeV1 {
+  std::uintptr_t caller_return{};
+  std::uint32_t generation{};
+  std::uint32_t tid{};
+  std::uint64_t tick{};
+};
 
 inline bool ConfigValid(const ConfigV1& config) noexcept {
   return g3::ConfigValid(config.tick) &&
@@ -332,11 +345,19 @@ inline Result ObserveFinalWriterReturn(const ConfigV1& config,
                                        StateV1* state,
                                        std::uintptr_t player,
                                        std::uintptr_t player_vptr,
-                                       std::uint32_t tid) noexcept {
+                                       std::uint32_t tid,
+                                       const CompletedFrameScopeV1* scope = nullptr) noexcept {
   if (state == nullptr || !ConfigValid(config))
     return Result::kInvalidArgument;
+  const bool completed_without_integration =
+      config.allow_zero_integration_updates && scope != nullptr &&
+      scope->caller_return == config.tick.game_base +
+          config.tick.frame_event_scheduler_return_rva &&
+      scope->generation == config.tick.generation && scope->tid == tid &&
+      scope->tick == state->tick.coordinator.tick;
   const g3::Result result = g3::ObserveFinalWriterReturn(
-      config.tick, &state->tick, player, player_vptr, tid);
+      config.tick, &state->tick, player, player_vptr, tid,
+      completed_without_integration);
   state->last_g3_result = static_cast<std::int32_t>(result);
   if (static_cast<std::int32_t>(result) < 0) return Result::kG3Fault;
   return result == g3::Result::kIgnoredUnqualified ||
@@ -381,9 +402,18 @@ inline Result ObserveTickEndReturn(const ConfigV1& config, StateV1* state,
   if (state->receipt_count >= kMaximumReceipts)
     return Result::kReceiptOverflow;
 
+  // Validate the authoritative coordinator boundary BEFORE closing input
+  // state. In particular, missing intervals alone are never completion proof.
+  if (config.allow_zero_integration_updates &&
+      state->tick.coordinator.tick_phase != coordinator::TickPhase::kFinalWritten) {
+    state->last_g3_result = static_cast<std::int32_t>(
+        g3::ObserveFrameEventReturn(config.tick, &state->tick, caller_return, tid));
+    return Result::kG3Fault;
+  }
   g4::TickReceiptV1 input_receipt{};
   const g4::Result ended = g4::EndTick(
-      &state->input_action, config.interval_replay, &input_receipt);
+      &state->input_action, config.interval_replay, &input_receipt,
+      config.allow_zero_integration_updates);
   state->last_g4_result = static_cast<std::int32_t>(ended);
   if (ended != g4::Result::kReady) return Result::kG4Fault;
 

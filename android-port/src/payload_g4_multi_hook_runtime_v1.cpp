@@ -3,6 +3,13 @@
 #include "barrel_prng_v1.h"
 #include "g8_runtime_build_profile_v1.h"
 #include "realtime_tick_budget_v1.h"
+#include "completed_frame_scope_v1.h"
+
+// Candidate only until controller/archive sparse-packet paths are integrated.
+// Default builds preserve the exact original FrameEvent wrapper call sequence.
+#ifndef A9TAS_EXPERIMENTAL_HIGH_REFRESH
+#define A9TAS_EXPERIMENTAL_HIGH_REFRESH 1
+#endif
 
 #include <android/log.h>
 #include <elf.h>
@@ -185,6 +192,9 @@ std::atomic_flag g_runtime_lock = ATOMIC_FLAG_INIT;
 // active_helpers rather than being accepted as same-thread nesting.
 std::atomic<std::uint32_t> g_dispatcher_tid{};
 std::atomic<std::uint32_t> g_dispatcher_depth{};
+#if A9TAS_EXPERIMENTAL_HIGH_REFRESH
+a9tas::completed_frame_scope_v1::Stack<> g_completed_frame_scopes{};
+#endif
 
 bool EnterDispatcher(std::uint32_t tid) {
   std::uint32_t owner = g_dispatcher_tid.load(std::memory_order_acquire);
@@ -682,6 +692,8 @@ bridge::ConfigV1 AdapterConfig() {
           .samples = replay ? g_replay_intervals : nullptr,
           .sample_count = replay ? g_control.replay_interval_count : 0,
       },
+      .allow_zero_integration_updates = A9TAS_EXPERIMENTAL_HIGH_REFRESH &&
+          (g_control.fixed_delta_us == 8333 || g_control.fixed_delta_us == 6944),
   };
 }
 
@@ -745,9 +757,10 @@ bool NativePhysicsMappingsValid() {
 }
 
 bool ReplayBuffersValid() {
+  const bool sparse = AdapterConfig().allow_zero_integration_updates;
   if (g_control.replay_frame_count != g_control.frame_limit ||
       g_control.replay_frame_count == 0 ||
-      g_control.replay_interval_count == 0 ||
+      (g_control.replay_interval_count == 0 && !sparse) ||
       g_control.replay_interval_count > kMaximumIntervalSamples) {
     g_evidence.reserved[0] = 0x2000;
     return false;
@@ -774,8 +787,9 @@ bool ReplayBuffersValid() {
       return false;
     }
     if (sample.tick != last_tick) {
-      if ((last_tick == UINT64_MAX && sample.tick != 0) ||
-          (last_tick != UINT64_MAX && sample.tick != last_tick + 1) ||
+      if ((!sparse && last_tick == UINT64_MAX && sample.tick != 0) ||
+          (last_tick != UINT64_MAX && sample.tick <= last_tick) ||
+          (!sparse && last_tick != UINT64_MAX && sample.tick != last_tick + 1) ||
           sample.ordinal != 0) {
         g_evidence.reserved[0] = 0x23000000ULL | index;
         return false;
@@ -788,7 +802,7 @@ bool ReplayBuffersValid() {
       return false;
     }
   }
-  if (last_tick + 1 != g_control.replay_frame_count) {
+  if (!sparse && last_tick + 1 != g_control.replay_frame_count) {
     g_evidence.reserved[0] = 0x2500;
     return false;
   }
@@ -1420,7 +1434,11 @@ G4FinalAfterV1(void* player) {
   g_evidence.last_vptr[1] = vptr;
   const bridge::Result result = bridge::ObserveFinalWriterReturn(
       AdapterConfig(), &g_runtime, reinterpret_cast<std::uintptr_t>(player),
-      vptr, tid);
+      vptr, tid
+#if A9TAS_EXPERIMENTAL_HIGH_REFRESH
+      , g_completed_frame_scopes.Current(tid)
+#endif
+      );
   Note(kFinalWriterHook, result, tid);
   if (result == bridge::Result::kObserved && g_evidence.status != kFault &&
       (g_control.mode == static_cast<std::uint32_t>(RunMode::kRecord) ||
@@ -1514,6 +1532,36 @@ G4FinalAfterV1(void* player) {
   UnlockRuntime();
 }
 
+#if A9TAS_EXPERIMENTAL_HIGH_REFRESH
+extern "C" __attribute__((noinline, visibility("hidden"))) bool
+G4FrameScopeEnterV1(void* context, std::uintptr_t caller_return) {
+  LockRuntime();
+  const std::uint32_t tid = Tid();
+  bridge::CompletedFrameScopeV1 witness{};
+  const auto config = AdapterConfig();
+  if (g_control.enabled && !g_control.completed &&
+      config.allow_zero_integration_updates &&
+      reinterpret_cast<std::uintptr_t>(context) == config.tick.expected_begin_owner &&
+      caller_return == config.tick.game_base + config.tick.frame_event_scheduler_return_rva &&
+      g_runtime.tick.coordinator.lifecycle == coordinator::Lifecycle::kInRace &&
+      g_runtime.tick.coordinator.tick_phase != coordinator::TickPhase::kClosed) {
+    witness = {caller_return, config.tick.generation, tid,
+               g_runtime.tick.coordinator.tick};
+  }
+  const bool tracked = g_completed_frame_scopes.Push(tid, witness);
+  UnlockRuntime();
+  return tracked;
+}
+
+extern "C" __attribute__((noinline, visibility("hidden"))) void
+G4FrameScopeLeaveV1(bool tracked) {
+  if (!tracked) return;
+  LockRuntime();
+  g_completed_frame_scopes.Pop(Tid());
+  UnlockRuntime();
+}
+#endif
+
 extern "C" __attribute__((noinline, visibility("hidden"))) void
 G4FrameAfterV1(std::uintptr_t caller_return) {
   __atomic_fetch_add(&g_evidence.wrapper_entries[kFrameEventHook], 1ULL,
@@ -1550,7 +1598,8 @@ G4FrameAfterV1(std::uintptr_t caller_return) {
           1000ULL;
       if (g4::BuildPhysicsRecordingFrame(
               receipt, g_record_physics_snapshot, monotonic_ns,
-              &g_recorded_frames[receipt_count_before]) != g4::Result::kReady) {
+              &g_recorded_frames[receipt_count_before],
+              AdapterConfig().allow_zero_integration_updates) != g4::Result::kReady) {
         Fault(kErrorAdapter);
       } else {
         if (g_barrel_capture_tick == receipt.tick) {
@@ -1957,10 +2006,21 @@ G4FrameEntryV1() {
       "stp x19, x20, [sp, #0x00]\n"
       "str x30, [sp, #0x10]\n"
       "mov x19, x30\n"
+#if A9TAS_EXPERIMENTAL_HIGH_REFRESH
+      G4_SAVE_BEFORE_HELPER
+      "mov x1, x19\n"
+      "bl G4FrameScopeEnterV1\n"
+      "mov w20, w0\n"
+      G4_RESTORE_BEFORE_HELPER
+#endif
       "bl G4FrameOriginalV1\n"
       G4_AFTER_ORIGINAL_SAVE
       "mov x0, x19\n"
       "bl G4FrameAfterV1\n"
+#if A9TAS_EXPERIMENTAL_HIGH_REFRESH
+      "mov w0, w20\n"
+      "bl G4FrameScopeLeaveV1\n"
+#endif
       G4_AFTER_ORIGINAL_RESTORE
       "ldr x30, [sp, #0x10]\n"
       "ldp x19, x20, [sp, #0x00]\n"
@@ -2326,7 +2386,8 @@ bool ArmControlValid(bool archived_rearm = false,
   if (mode == RunMode::kReplay) {
     g_evidence.reserved[0] = 0x1200;
     if (g_control.replay_frame_count != g_control.frame_limit ||
-        g_control.replay_interval_count == 0 ||
+        (g_control.replay_interval_count == 0 &&
+         !AdapterConfig().allow_zero_integration_updates) ||
         g_control.replay_interval_count > kMaximumIntervalSamples ||
         !NonzeroSha256(g_control.recording_sha256) || !ReplayBuffersValid() ||
         g_control.replay_speed_factor < kMinimumReplaySpeedFactor ||
@@ -2386,7 +2447,8 @@ bool ArmControlValid(bool archived_rearm = false,
         g_control.generation != g_control.archived_generation + 1u ||
         g_control.archived_frame_count == 0 ||
         g_control.archived_frame_count > kMaximumFrames ||
-        g_control.archived_interval_count == 0 ||
+        (g_control.archived_interval_count == 0 &&
+         !AdapterConfig().allow_zero_integration_updates) ||
         g_control.archived_interval_count > kMaximumIntervalSamples)
       return false;
     if (mode == RunMode::kReplay) {
@@ -2604,7 +2666,8 @@ bool ActivatePendingAtLifecycle(void* lifecycle_object) {
         g_control.generation == 0 || g_control.generation == UINT32_MAX ||
         g_control.pending_generation != g_control.generation + 1u ||
         g_runtime.receipt_count == 0 ||
-        g_evidence.interval_records == 0) {
+        (g_evidence.interval_records == 0 &&
+         !AdapterConfig().allow_zero_integration_updates)) {
       __atomic_store_n(&g_control.pending_state, 3u, __ATOMIC_RELEASE);
       return false;
     }
@@ -3232,7 +3295,8 @@ bool SealPausedRecord() {
       g_runtime.receipt_count != g_runtime.tick.coordinator.ticks_published ||
       g_runtime.receipt_count != g_runtime.tick.coordinator.ticks_begun ||
       g_runtime.receipt_count != g_evidence.recorded_frames ||
-      g_evidence.interval_records == 0) {
+      (g_evidence.interval_records == 0 &&
+       !AdapterConfig().allow_zero_integration_updates)) {
     Fault(kErrorControl);
     return false;
   }
@@ -3292,27 +3356,10 @@ bool ActiveReplayReceiptValidForBranch() {
 }
 
 bool StagedReplayIntervalsValid(std::uint32_t prefix_count) {
-  if (prefix_count == 0 || g_recorded_interval_count == 0 ||
-      g_recorded_interval_count > kMaximumIntervalSamples)
-    return false;
-  std::uint64_t last_tick = UINT64_MAX;
-  std::uint32_t next_ordinal = 0;
-  for (std::uint32_t index = 0; index < g_recorded_interval_count; ++index) {
-    const auto& sample = g_recorded_intervals[index];
-    if (sample.tick >= prefix_count ||
-        !g4::IntervalBitsValid(sample.output_bits))
-      return false;
-    if (sample.tick != last_tick) {
-      if ((last_tick == UINT64_MAX && sample.tick != 0) ||
-          (last_tick != UINT64_MAX && sample.tick != last_tick + 1) ||
-          sample.ordinal != 0)
-        return false;
-      last_tick = sample.tick;
-      next_ordinal = 0;
-    }
-    if (sample.ordinal != next_ordinal++) return false;
-  }
-  return last_tick + 1 == prefix_count;
+  return g_recorded_interval_count <= kMaximumIntervalSamples &&
+      g4::IntervalSequenceValid(
+          {g_recorded_intervals, g_recorded_interval_count}, prefix_count,
+          AdapterConfig().allow_zero_integration_updates);
 }
 
 bool StagedReplayPrefixValid(std::uint32_t prefix_count) {
@@ -3558,7 +3605,8 @@ bool ArchivedCompletedReceiptValid() {
       g_evidence.recorded_frames == 0 && g_evidence.interval_records == 0;
   return g_control.archived_generation != 0 &&
       g_control.archived_frame_count != 0 &&
-      g_control.archived_interval_count != 0 &&
+      (g_control.archived_interval_count != 0 ||
+       AdapterConfig().allow_zero_integration_updates) &&
       !g_runtime.input_action.tick_open &&
       g_runtime.tick.coordinator.tick_phase == coordinator::TickPhase::kClosed &&
       g_runtime.tick.coordinator.generation == g_control.archived_generation &&

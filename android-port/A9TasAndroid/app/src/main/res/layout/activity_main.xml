@@ -372,7 +372,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="120/144 为实验选项。仅新录制生效；回放与续录沿用存档步长。24000 Tick 容量在 60/120/144 下约为 400/200/166 秒；高频更耗性能。连续刷圈需结束后再改频率。"
+                android:text="默认 60 Tick/s；120/144 为实验选项，仅新录制生效。回放与续录沿用存档步长，不直接控制屏幕刷新率。24000 Tick 在 60/120/144 下约为 400/200/166 秒。高频回放仍存在镜头抽搐；连续刷圈需结束后再改频率。"
                 android:textColor="@color/text_tertiary"
                 android:textSize="12sp" />
             <Button

@@ -44,6 +44,9 @@ enum BoundaryFlag : std::uint32_t {
   kBoundaryPrePhysics = 1u << 1,
   kBoundaryFinalWriter = 1u << 2,
   kBoundaryTickEnd = 1u << 3,
+  // A completed native update may interpolate without integrating. Never
+  // manufacture kBoundaryPrePhysics or increment an interval counter for it.
+  kBoundaryNoIntegration = 1u << 4,
 };
 
 inline constexpr std::uint32_t kCompleteTickBoundaryMask =
@@ -385,15 +388,21 @@ inline Result OnPrePhysics(State* state, std::uint32_t generation,
 }
 
 inline Result OnFinalWriter(State* state, std::uint32_t generation,
-                            std::uint64_t tick, std::uint32_t tid) noexcept {
+                            std::uint64_t tick, std::uint32_t tid,
+                            bool completed_without_integration = false) noexcept {
   if (state == nullptr || tid == 0) return Fault(state, Result::kInvalidArgument);
   if (state->lifecycle != Lifecycle::kInRace)
     return Fault(state, Result::kWrongLifecycle);
   if (generation != state->generation)
     return Fault(state, Result::kWrongGeneration);
   if (tick != state->tick) return Fault(state, Result::kWrongTick);
-  if (state->tick_phase != TickPhase::kPrePhysics)
+  const bool zero_integration = completed_without_integration &&
+      state->tick_phase == TickPhase::kBegun &&
+      state->scratch.physics_interval_calls == 0;
+  if (state->tick_phase != TickPhase::kPrePhysics && !zero_integration)
     return Fault(state, Result::kWrongOrder);
+  if (zero_integration)
+    state->scratch.boundary_flags |= kBoundaryNoIntegration;
   state->scratch.final_writer_tid = tid;
   state->scratch.boundary_flags |= kBoundaryFinalWriter;
   state->tick_phase = TickPhase::kFinalWritten;
@@ -417,7 +426,10 @@ inline Result OnTickEnd(State* state, std::uint32_t generation,
     return Fault(state, Result::kTickOverflow);
   state->scratch.end_tid = tid;
   state->scratch.boundary_flags |= kBoundaryTickEnd;
-  if (state->scratch.boundary_flags != kCompleteTickBoundaryMask)
+  const auto expected_mask = state->scratch.physics_interval_calls == 0
+      ? (kCompleteTickBoundaryMask & ~kBoundaryPrePhysics) | kBoundaryNoIntegration
+      : kCompleteTickBoundaryMask;
+  if (state->scratch.boundary_flags != expected_mask)
     return Fault(state, Result::kWrongOrder);
   *published = state->scratch;
   ++state->tick;

@@ -501,10 +501,11 @@ final class SessionOrchestrator {
             int ticks = Integer.parseInt(count.group(1));
             require(ticks > 0 && ticks < CAPACITY, "race did not complete before capacity");
             for (String token : new String[]{"complete=1", "ticks=" + ticks,
-                    "begin=" + ticks, "interval=" + ticks, "final=" + ticks,
+                    "begin=" + ticks, "final=" + ticks,
                     "end=" + ticks, "error=0",
                     checkpoint ? "completion=1,3" : "completion=1,2"})
                 require(hasToken(status, token), "lifecycle receipt missing " + token);
+            validateIntegrationReceipt(status, ticks, identity.recordDeltaUs);
 
             Matcher lifecycleMatch = Pattern.compile(
                     "(?:^|\\s)lifecycle=([0-9]+)(?:\\s|$)").matcher(status);
@@ -1160,9 +1161,10 @@ final class SessionOrchestrator {
             if (!hardStopAtTarget) throwIfCancelled(observer);
             if (!prearmContinuation) {
                 for (String token : new String[]{"complete=1", "ticks=" + ticks,
-                        "begin=" + ticks, "interval=" + ticks, "final=" + ticks,
+                        "begin=" + ticks, "final=" + ticks,
                         "end=" + ticks, "error=0", "completion=0,1"})
                     require(hasToken(status, token), "replay receipt missing " + token);
+                validateIntegrationReceipt(status, ticks, replaySummary.fixedDeltaUs);
             }
 
             if (!prearmContinuation) {
@@ -1519,9 +1521,43 @@ final class SessionOrchestrator {
             require(base == preferences.getLong("session_base", 0L), "stored game base changed");
         Identity identity = new Identity(pid, startTicks, base, packageName, processName,
                 nativeSha, profile, backend);
-        int hz = preferences.getInt("record_tick_hz", 60);
-        identity.recordDeltaUs = hz == 120 ? 8333 : hz == 144 ? 6944 : 16667;
+        identity.recordDeltaUs = stableRecordDeltaUs(preferences);
         return identity;
+    }
+
+    // Only an invalid new-recording setting is migrated. Replay/continuation keeps
+    // the archive's own delta; silently relabelling an existing file is wrong.
+    static void validateIntegrationReceipt(String status, int ticks, long deltaUs)
+            throws java.io.IOException {
+        Matcher integrated = Pattern.compile("(?:^|\\s)interval=([0-9]+)(?:\\s|$)")
+                .matcher(status);
+        Matcher calls = Pattern.compile("(?:^|\\s)interval_calls=([0-9]+)(?:\\s|$)")
+                .matcher(status);
+        require(ticks > 0 && integrated.find() && calls.find(),
+                "completion receipt has no integration counters");
+        long frames, count;
+        try {
+            frames = Long.parseLong(integrated.group(1));
+            count = Long.parseLong(calls.group(1));
+        } catch (NumberFormatException invalid) {
+            throw new java.io.IOException("completion integration counter overflow", invalid);
+        }
+        boolean sparse = deltaUs == 8333 || deltaUs == 6944;
+        require(frames <= ticks && count >= frames
+                        && (frames != 0 || count == 0)
+                        && (sparse || frames == ticks),
+                "completion integration counters disagree: ticks=" + ticks
+                        + " integrated=" + frames + " calls=" + count);
+    }
+
+    static int stableRecordDeltaUs(android.content.SharedPreferences preferences) {
+        int requested = preferences.getInt("record_tick_hz", 60);
+        if (requested == 120) return 8333;
+        if (requested == 144) return 6944;
+        if (requested != 60) preferences.edit()
+                .putInt("record_tick_hz_before_compatibility_reset", requested)
+                .putInt("record_tick_hz", 60).commit();
+        return 16667;
     }
 
     private static String waitForCompletion(Identity identity, long owner, String prefix,
@@ -2109,6 +2145,7 @@ final class SessionOrchestrator {
     static String runtimeFailureDetails(String value) {
         StringBuilder result = new StringBuilder();
         for (String key : new String[]{"error", "fault_context", "fault_tick",
+                "interval_probe", "tick_config", "idle_final",
                 "coordinator_result", "coordinator_intervals", "coordinator",
                 "core_results", "begin", "interval", "interval_calls",
                 "final", "end", "ticks", "records", "checks", "reject"}) {

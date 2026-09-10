@@ -356,6 +356,32 @@ inline bool IntervalViewValid(const IntervalReplayViewV1& view) noexcept {
   return view.sample_count == 0 || view.samples != nullptr;
 }
 
+// Diagnostic groups are dense for legacy files and may be absent for an
+// explicitly supported interpolation-only logical packet. Ordinals remain
+// contiguous within each present group; missing groups never invent samples.
+inline bool IntervalSequenceValid(const IntervalReplayViewV1& view,
+                                 std::uint64_t frame_count,
+                                 bool allow_sparse = false) noexcept {
+  if (!IntervalViewValid(view) || frame_count == 0) return false;
+  if (view.sample_count == 0) return allow_sparse;
+  std::uint64_t last_tick = 0;
+  std::uint64_t next_ordinal = 0;
+  for (std::size_t i = 0; i < view.sample_count; ++i) {
+    const auto& sample = view.samples[i];
+    if (sample.tick >= frame_count || !IntervalBitsValid(sample.output_bits))
+      return false;
+    if (i == 0 || sample.tick != last_tick) {
+      if ((i != 0 && sample.tick <= last_tick) ||
+          (!allow_sparse && sample.tick != (i == 0 ? 0 : last_tick + 1)))
+        return false;
+      last_tick = sample.tick;
+      next_ordinal = 0;
+    }
+    if (sample.ordinal != next_ordinal++) return false;
+  }
+  return allow_sparse || last_tick == frame_count - 1;
+}
+
 inline std::uint64_t CurrentControlPair(const StateV1& state) noexcept {
   return static_cast<std::uint64_t>(state.setter_cache.brake_bits) |
          (static_cast<std::uint64_t>(state.setter_cache.steering_bits) << 32);
@@ -582,33 +608,41 @@ inline Result OnPhysicsIntervalAfterOriginal(
 }
 
 inline Result EndTick(StateV1* state, const IntervalReplayViewV1& replay,
-                      TickReceiptV1* receipt) noexcept {
+                      TickReceiptV1* receipt,
+                      bool allow_zero_integration_updates = false) noexcept {
   if (state == nullptr || receipt == nullptr || !IntervalViewValid(replay))
     return Result::kInvalidArgument;
   if (!state->tick_open) return Result::kWrongOrder;
-  if (state->receipt.physics_interval_calls == 0)
+  if (state->receipt.physics_interval_calls == 0 && !allow_zero_integration_updates)
     return Result::kWrongOrder;
   if (state->replay_packet_present) {
-    if (state->interval_cursor >= replay.sample_count)
+    if (state->interval_cursor > replay.sample_count)
       return Result::kIntervalMismatch;
-    const IntervalSampleV1& first = replay.samples[state->interval_cursor];
-    if (first.tick != state->tick || first.ordinal != 0 ||
-        !IntervalBitsValid(first.output_bits))
-      return Result::kIntervalMismatch;
-    std::uint32_t expected_ordinal = 0;
-    while (state->interval_cursor < replay.sample_count) {
-      const IntervalSampleV1& sample = replay.samples[state->interval_cursor];
-      if (sample.tick != state->tick) break;
-      if (sample.ordinal != expected_ordinal ||
-          !IntervalBitsValid(sample.output_bits))
-        return Result::kIntervalMismatch;
-      ++expected_ordinal;
-      ++state->interval_cursor;
-    }
-    if (expected_ordinal == 0 ||
+    const bool empty_group = state->interval_cursor == replay.sample_count ||
         (state->interval_cursor < replay.sample_count &&
-         replay.samples[state->interval_cursor].tick <= state->tick))
+         replay.samples[state->interval_cursor].tick > state->tick);
+    if (!allow_zero_integration_updates && empty_group)
       return Result::kIntervalMismatch;
+    if (!empty_group) {
+      const IntervalSampleV1& first = replay.samples[state->interval_cursor];
+      if (first.tick != state->tick || first.ordinal != 0 ||
+          !IntervalBitsValid(first.output_bits))
+        return Result::kIntervalMismatch;
+      std::uint32_t expected_ordinal = 0;
+      while (state->interval_cursor < replay.sample_count) {
+        const IntervalSampleV1& sample = replay.samples[state->interval_cursor];
+        if (sample.tick != state->tick) break;
+        if (sample.ordinal != expected_ordinal ||
+            !IntervalBitsValid(sample.output_bits))
+          return Result::kIntervalMismatch;
+        ++expected_ordinal;
+        ++state->interval_cursor;
+      }
+      if (expected_ordinal == 0 ||
+          (state->interval_cursor < replay.sample_count &&
+           replay.samples[state->interval_cursor].tick <= state->tick))
+        return Result::kIntervalMismatch;
+    }
   }
   state->receipt.setter_sequence_at_end =
       state->setter_cache.event_sequence;
@@ -637,11 +671,12 @@ inline Result DiscardOpenTickForRaceEnd(StateV1* state) noexcept {
 // semantic receipt for those deliberately absent fields.
 inline Result BuildActionRecordingFrame(
     const TickReceiptV1& receipt, std::uint64_t monotonic_ns,
-    recording::RecordingFrameV1* frame) noexcept {
+    recording::RecordingFrameV1* frame,
+    bool allow_zero_integration_updates = false) noexcept {
   if (frame == nullptr || receipt.replay_packet_present ||
       receipt.fixed_delta_us < recording::kMinimumFixedIntervalUs ||
       receipt.fixed_delta_us > recording::kMaximumFixedIntervalUs ||
-      receipt.physics_interval_calls == 0 ||
+      (receipt.physics_interval_calls == 0 && !allow_zero_integration_updates) ||
       !AxisBitsValid(receipt.steering_bits, 1.0f) ||
       !AxisBitsValid(receipt.brake_bits, 1.05f) ||
       receipt.recorded_nitro_calls > 2 ||
@@ -671,13 +706,14 @@ inline Result BuildActionRecordingFrame(
 inline Result BuildPhysicsRecordingFrame(
     const TickReceiptV1& receipt, const PhysicsSnapshotV1& snapshot,
     std::uint64_t monotonic_ns,
-    recording::RecordingFrameV1* frame) noexcept {
+    recording::RecordingFrameV1* frame,
+    bool allow_zero_integration_updates = false) noexcept {
   if (frame == nullptr || snapshot.tick != receipt.tick ||
       !PhysicsSnapshotValid(snapshot))
     return Result::kInvalidArgument;
   recording::RecordingFrameV1 output{};
   const Result action = BuildActionRecordingFrame(receipt, monotonic_ns,
-                                                   &output);
+                                                   &output, allow_zero_integration_updates);
   if (action != Result::kReady) return action;
   std::memcpy(output.transform_bits, snapshot.transform_bits,
               sizeof(output.transform_bits));

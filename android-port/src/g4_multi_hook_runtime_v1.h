@@ -235,12 +235,16 @@ inline constexpr char kRecordingBundleMagic[8] = {
 };
 inline constexpr std::uint32_t kLegacyRecordingBundleVersion = 2;
 inline constexpr std::uint32_t kRecordingBundleVersion = 3;
+// Explicit opt-in format: absent interval groups represent complete logical
+// updates with no integration. Existing v2/v3 files remain dense.
+inline constexpr std::uint32_t kSparseRecordingBundleVersion = 4;
 enum RecordingBundleFlag : std::uint32_t {
   kBundleAdjustedBrakeSteering = 1u << 0,
   kBundleNaturalNitro = 1u << 1,
   kBundleExactIntervalStream = 1u << 2,
   kBundlePhysicsValid = 1u << 3,
   kBundleBarrelStabilization = 1u << 4,
+  kBundleZeroIntegrationUpdates = 1u << 5,
 };
 inline constexpr std::uint32_t kRecordingBundleFlags =
     kBundleAdjustedBrakeSteering | kBundleNaturalNitro |
@@ -249,6 +253,8 @@ inline constexpr std::uint32_t kRecordingBundleFlags =
 inline constexpr std::uint32_t kLegacyRecordingBundleFlags =
     kBundleAdjustedBrakeSteering | kBundleNaturalNitro |
     kBundleExactIntervalStream | kBundlePhysicsValid;
+inline constexpr std::uint32_t kSparseRecordingBundleFlags =
+    kRecordingBundleFlags | kBundleZeroIntegrationUpdates;
 
 // Replay diagnostics reuse the already allocated record-mode frame buffer.
 // During replay each qualified Final Writer stores the natural after-original

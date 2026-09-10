@@ -1,5 +1,6 @@
 param(
-    [string]$NdkRoot = "C:\Users\Administrator\Documents\a9tasv2\toolchains\android-ndk-r27d"
+    [string]$NdkRoot = "C:\Users\Administrator\Documents\a9tasv2\toolchains\android-ndk-r27d",
+    [switch]$ExperimentalHighRefresh
 )
 
 Set-StrictMode -Version Latest
@@ -25,6 +26,11 @@ $readelf = Join-Path $toolBin "llvm-readelf.exe"
 $nm = Join-Path $toolBin "llvm-nm.exe"
 $alignmentPolicy = Join-Path $portRoot "tools\assert_elf_load_alignment_v1.ps1"
 $outDir = Join-Path $portRoot "build\g4-multi-hook-runtime-v1"
+if ($ExperimentalHighRefresh) {
+    # Keep the candidate separate from the pinned, deployed payload until the
+    # matching controller/resolver and APK have been built together.
+    $outDir = Join-Path $portRoot "build\g4-multi-hook-runtime-high-refresh-v1"
+}
 $payload = Join-Path $outDir "liba9tas_g4_multi_hook_runtime_v1.so"
 $disassembly = Join-Path $outDir "g4_multi_hook_runtime_v1.disasm.txt"
 
@@ -119,7 +125,11 @@ try {
 } finally {
     $gameStream.Dispose()
 }
-& $compiler $source $barrelCore "-I$(Join-Path $portRoot 'src')" "-shared" "-fPIC" `
+$candidateFlags = @()
+if ($ExperimentalHighRefresh) {
+    $candidateFlags += '-DA9TAS_EXPERIMENTAL_HIGH_REFRESH=1'
+}
+& $compiler $source $barrelCore @candidateFlags "-I$(Join-Path $portRoot 'src')" "-shared" "-fPIC" `
     "-O2" "-std=c++20" "-static-libstdc++" "-fno-exceptions" `
     "-fno-rtti" "-fno-stack-protector" "-Wall" "-Wextra" "-Werror" `
     "-Wl,--build-id=sha1" "-Wl,--no-undefined" "-llog" "-ldl" `

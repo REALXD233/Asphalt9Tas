@@ -570,15 +570,19 @@ bool ReadReplayBundle(const char* path, std::uint32_t expected_frames,
   const bool current_bundle =
       header.version == protocol::kRecordingBundleVersion &&
       header.flags == protocol::kRecordingBundleFlags;
+  const bool sparse_bundle =
+      header.version == protocol::kSparseRecordingBundleVersion &&
+      header.flags == protocol::kSparseRecordingBundleFlags &&
+      (header.fixed_delta_us == 8333 || header.fixed_delta_us == 6944);
   if (std::memcmp(header.magic, protocol::kRecordingBundleMagic,
                   sizeof(header.magic)) != 0 ||
-      (!legacy_bundle && !current_bundle) ||
+      (!legacy_bundle && !current_bundle && !sparse_bundle) ||
       header.header_size != sizeof(header) ||
       header.frame_size != sizeof(recording::RecordingFrameV1) ||
       header.interval_size != sizeof(g4::IntervalSampleV1) ||
       header.frame_count != expected_frames ||
       header.frame_count == 0 || header.frame_count > protocol::kMaximumFrames ||
-      header.interval_count == 0 ||
+      (header.interval_count == 0 && !sparse_bundle) ||
       header.interval_count > protocol::kMaximumIntervalSamples ||
       header.fixed_delta_us < recording::kMinimumFixedIntervalUs ||
       header.fixed_delta_us > recording::kMaximumFixedIntervalUs ||
@@ -597,8 +601,9 @@ bool ReadReplayBundle(const char* path, std::uint32_t expected_frames,
   std::memcpy(output.frames.data(), bytes.data() + offset,
               output.frames.size() * sizeof(output.frames[0]));
   offset += output.frames.size() * sizeof(output.frames[0]);
-  std::memcpy(output.intervals.data(), bytes.data() + offset,
-              output.intervals.size() * sizeof(output.intervals[0]));
+  if (!output.intervals.empty())
+    std::memcpy(output.intervals.data(), bytes.data() + offset,
+                output.intervals.size() * sizeof(output.intervals[0]));
   for (std::uint32_t index = 0; index < header.frame_count; ++index) {
     const auto& frame = output.frames[index];
     if (!g4::PhysicsRecordingFrameValid(frame) || frame.tick != index ||
@@ -609,23 +614,9 @@ bool ReadReplayBundle(const char* path, std::uint32_t expected_frames,
             static_cast<std::uint64_t>(index) * header.fixed_delta_us * 1000ULL)
       return false;
   }
-  std::uint64_t last_tick = UINT64_MAX;
-  std::uint32_t next_ordinal = 0;
-  for (const auto& sample : output.intervals) {
-    if (sample.tick >= header.frame_count ||
-        !g4::IntervalBitsValid(sample.output_bits))
-      return false;
-    if (sample.tick != last_tick) {
-      if ((last_tick == UINT64_MAX && sample.tick != 0) ||
-          (last_tick != UINT64_MAX && sample.tick != last_tick + 1) ||
-          sample.ordinal != 0)
-        return false;
-      last_tick = sample.tick;
-      next_ordinal = 0;
-    }
-    if (sample.ordinal != next_ordinal++) return false;
-  }
-  if (last_tick + 1 != header.frame_count) return false;
+  if (!g4::IntervalSequenceValid(
+          {output.intervals.data(), output.intervals.size()},
+          header.frame_count, sparse_bundle)) return false;
   Sha256 digest;
   digest.Update(bytes.data(), bytes.size());
   output.sha256 = digest.Finish();
@@ -662,7 +653,8 @@ bool ArchivedReplayFieldsValid(const protocol::Control& control,
          control.generation == control.archived_generation + 1u &&
          control.archived_frame_count != 0 &&
          control.archived_frame_count <= protocol::kMaximumFrames &&
-         control.archived_interval_count != 0 &&
+         (control.archived_interval_count != 0 ||
+          control.fixed_delta_us == 8333 || control.fixed_delta_us == 6944) &&
          control.archived_interval_count <= protocol::kMaximumIntervalSamples;
 }
 
@@ -677,7 +669,8 @@ bool ArchivedRecordFieldsValid(const protocol::Control& control,
          control.generation == control.archived_generation + 1u &&
          control.archived_frame_count != 0 &&
          control.archived_frame_count <= limit &&
-         control.archived_interval_count != 0 &&
+         (control.archived_interval_count != 0 ||
+          control.fixed_delta_us == 8333 || control.fixed_delta_us == 6944) &&
          control.archived_interval_count <= protocol::kMaximumIntervalSamples;
 }
 
@@ -1368,7 +1361,8 @@ bool StaticControlValid(const protocol::Control& control,
       control.mode == static_cast<std::uint32_t>(protocol::RunMode::kReplay);
   if (replay_mode) {
     if (control.replay_frame_count != limit ||
-        control.replay_interval_count == 0 ||
+        (control.replay_interval_count == 0 &&
+         control.fixed_delta_us != 8333 && control.fixed_delta_us != 6944) ||
         control.replay_interval_count > protocol::kMaximumIntervalSamples ||
         !RecordingHashIsNonzero(control) ||
         control.replay_speed_factor < protocol::kMinimumReplaySpeedFactor ||
@@ -1516,7 +1510,8 @@ bool SealedLifecycleRecordingValid(
       state.tick.coordinator.generation == control.generation &&
       state.receipt_count != 0 &&
       state.receipt_count == evidence.recorded_frames &&
-      evidence.interval_records != 0;
+      (evidence.interval_records != 0 ||
+       control.fixed_delta_us == 8333 || control.fixed_delta_us == 6944);
 }
 
 bool SealedLifecycleRecordForRearmValid(
@@ -1544,7 +1539,8 @@ bool SealedLifecycleRecordForRearmValid(
             control.archived_generation)) &&
       state.receipt_count != 0 &&
       state.receipt_count == evidence.recorded_frames &&
-      evidence.interval_records != 0;
+      (evidence.interval_records != 0 ||
+       control.fixed_delta_us == 8333 || control.fixed_delta_us == 6944);
 }
 
 bool PausedReplayForBranchValid(const protocol::Control& control,
@@ -1952,6 +1948,11 @@ bool CompleteReceiptValid(const protocol::Control& control,
   };
   if (completed_frames == 0 || completed_frames > limit)
     return reject(30);
+  const bool sparse_updates = control.fixed_delta_us == 8333 || control.fixed_delta_us == 6944;
+  std::uint64_t integrated_frames = 0;
+  for (std::uint32_t i = 0; i < completed_frames; ++i)
+    integrated_frames += state.tick.receipts[i].physics_interval_calls != 0;
+  if (!sparse_updates && integrated_frames != completed_frames) return reject(32);
   // QueueArchivedSession publishes the next session's Control before Retry,
   // while the sealed receipts intentionally remain owned by the predecessor
   // generation.  Validate that immutable receipt identity against itself and
@@ -1987,11 +1988,11 @@ bool CompleteReceiptValid(const protocol::Control& control,
       state.receipt_count != completed_frames ||
       state.tick.coordinator.ticks_published != completed_frames ||
       state.tick.coordinator.ticks_begun != completed_frames ||
-      state.tick.coordinator.pre_physics_events != completed_frames ||
-      state.tick.coordinator.physics_interval_calls < completed_frames ||
+      state.tick.coordinator.pre_physics_events != integrated_frames ||
+      state.tick.coordinator.physics_interval_calls < integrated_frames ||
       state.tick.tick_begin_entries != completed_frames ||
-      state.tick.pre_physics_entries != completed_frames ||
-      state.tick.physics_interval_calls < completed_frames)
+      state.tick.pre_physics_entries != integrated_frames ||
+      state.tick.physics_interval_calls < integrated_frames)
     return reject(3);
   if (evidence.qualified_events[protocol::kSubmitHook] != completed_frames ||
       (replay_mode &&
@@ -2087,15 +2088,21 @@ bool CompleteReceiptValid(const protocol::Control& control,
   for (std::uint32_t index = 0; index < completed_frames; ++index) {
     const coordinator::TickScratch& receipt = state.tick.receipts[index];
     const g4::TickReceiptV1& action = state.receipts[index];
+    const bool zero_integration = sparse_updates && receipt.physics_interval_calls == 0;
+    const auto expected_boundary = zero_integration
+        ? (coordinator::kCompleteTickBoundaryMask & ~coordinator::kBoundaryPrePhysics) |
+            coordinator::kBoundaryNoIntegration
+        : coordinator::kCompleteTickBoundaryMask;
     if (receipt.tick != index ||
         receipt.session_id != receipt_session_id ||
         receipt.generation != receipt_generation ||
-        receipt.boundary_flags != coordinator::kCompleteTickBoundaryMask ||
+        receipt.boundary_flags != expected_boundary ||
         receipt.selected_packet_index !=
             (replay_mode ? index : coordinator::kNoPacket) ||
-        receipt.begin_tid == 0 || receipt.pre_physics_tid == 0 ||
+        receipt.begin_tid == 0 ||
+        (zero_integration ? receipt.pre_physics_tid != 0 : receipt.pre_physics_tid == 0) ||
         receipt.final_writer_tid == 0 || receipt.end_tid == 0 ||
-        receipt.physics_interval_calls == 0 || action.tick != index ||
+        (!zero_integration && receipt.physics_interval_calls == 0) || action.tick != index ||
         action.replay_packet_present != replay_mode ||
         action.fixed_delta_us != control.fixed_delta_us ||
         action.physics_interval_calls != receipt.physics_interval_calls ||
@@ -2177,12 +2184,14 @@ bool RecordedBuffersValid(int mem, const Runtime& runtime,
                            const protocol::Evidence& evidence,
                            const bridge::StateV1& state,
                            bool require_recorded_native_identity = true) {
+  const bool sparse_updates =
+      control.fixed_delta_us == 8333 || control.fixed_delta_us == 6944;
   if (control.mode ==
       static_cast<std::uint32_t>(protocol::RunMode::kNeutral))
     return true;
   if (control.mode == static_cast<std::uint32_t>(protocol::RunMode::kReplay)) {
     if (control.replay_frame_count != control.frame_limit ||
-        control.replay_interval_count == 0 ||
+        (control.replay_interval_count == 0 && !sparse_updates) ||
         control.replay_interval_count > protocol::kMaximumIntervalSamples ||
         !RecordingHashIsNonzero(control) ||
         (require_recorded_native_identity &&
@@ -2233,8 +2242,10 @@ bool RecordedBuffersValid(int mem, const Runtime& runtime,
           !g4::IntervalBitsValid(sample.output_bits))
         return false;
       if (sample.tick != last_tick) {
-        if ((last_tick == UINT64_MAX && sample.tick != 0) ||
-            (last_tick != UINT64_MAX && sample.tick != last_tick + 1) ||
+        if ((!sparse_updates && last_tick == UINT64_MAX && sample.tick != 0) ||
+            (last_tick != UINT64_MAX &&
+             (sample.tick <= last_tick ||
+              (!sparse_updates && sample.tick != last_tick + 1))) ||
             sample.ordinal != 0)
           return false;
         last_tick = sample.tick;
@@ -2242,7 +2253,7 @@ bool RecordedBuffersValid(int mem, const Runtime& runtime,
       }
       if (sample.ordinal != next_ordinal++) return false;
     }
-    return last_tick + 1 == control.frame_limit;
+    return sparse_updates || last_tick + 1 == control.frame_limit;
   }
   const bool lifecycle_completion =
       control.completion_policy == static_cast<std::uint32_t>(
@@ -2254,7 +2265,7 @@ bool RecordedBuffersValid(int mem, const Runtime& runtime,
       recorded_frame_count == 0 ||
       recorded_frame_count > control.frame_limit ||
       evidence.recorded_frames != recorded_frame_count ||
-      evidence.interval_records == 0 ||
+      (evidence.interval_records == 0 && !sparse_updates) ||
       evidence.interval_records > protocol::kMaximumIntervalSamples ||
       (!lifecycle_completion && !NativePhysicsIdentityAlive(mem, control)))
     return false;
@@ -3484,6 +3495,8 @@ int main(int argc, char** argv) {
              " coordinator=%u,%" PRIu64 ",%u,%" PRIu64
              " fault_context=0x%" PRIx64 " fault_tick=%" PRIu64
              " coordinator_result=%d coordinator_intervals=%" PRIu64
+             " interval_probe=%" PRIu64 ",%" PRIu64 ",0x%" PRIx64 ",0x%" PRIx64 ",0x%" PRIx64 ",0x%" PRIx64
+             " tick_config=%u,%u idle_final=%" PRIu64
              " fast_replay=%u,%" PRIu64 ",%" PRIu64
              " target_barrier=%d target_pause=%d target_release=%d target_stop=%d target_resume=%d early_pause=%d cancelled=%d\n",
             complete ? 1 : 0, state.receipt_count,
@@ -3541,6 +3554,14 @@ int main(int argc, char** argv) {
             evidence.reserved[0], evidence.last_tick,
             static_cast<std::int32_t>(state.tick.coordinator.last_result),
             state.tick.coordinator.physics_interval_calls,
+            evidence.wrapper_entries[protocol::kTickHook],
+            evidence.qualified_events[protocol::kTickHook],
+            evidence.last_object[protocol::kTickHook],
+            control.expected_interval_owner,
+            evidence.last_vptr[protocol::kTickHook],
+            control.expected_interval_owner_vptr,
+            control.mode, control.fixed_delta_us,
+            state.tick.idle_final_writer_returns,
             control.replay_speed_factor,
             evidence.wrapper_entries[protocol::kLogicDispatcherHook],
             evidence.qualified_events[protocol::kLogicDispatcherHook],
@@ -3847,14 +3868,17 @@ int main(int argc, char** argv) {
     protocol::RecordingBundleHeaderV1 header{};
     std::memcpy(header.magic, protocol::kRecordingBundleMagic,
                 sizeof(header.magic));
-    header.version = protocol::kRecordingBundleVersion;
+    const bool sparse_bundle = control.fixed_delta_us == 8333 || control.fixed_delta_us == 6944;
+    header.version = sparse_bundle ? protocol::kSparseRecordingBundleVersion
+                                  : protocol::kRecordingBundleVersion;
     header.header_size = sizeof(header);
     header.frame_size = sizeof(frames[0]);
     header.interval_size = sizeof(intervals[0]);
     header.frame_count = frame_count;
     header.interval_count = static_cast<std::uint32_t>(intervals.size());
     header.fixed_delta_us = control.fixed_delta_us;
-    header.flags = protocol::kRecordingBundleFlags;
+    header.flags = sparse_bundle ? protocol::kSparseRecordingBundleFlags
+                                : protocol::kRecordingBundleFlags;
     header.session_id = control.session_id;
     header.generation = control.generation;
     FILE* output = read_buffers ? std::fopen(output_path, "wb") : nullptr;
