@@ -4,6 +4,7 @@
 #include "g8_runtime_build_profile_v1.h"
 #include "realtime_tick_budget_v1.h"
 #include "completed_frame_scope_v1.h"
+#include "physics_initial_phase_v1.h"
 
 // Candidate only until controller/archive sparse-packet paths are integrated.
 // Default builds preserve the exact original FrameEvent wrapper call sequence.
@@ -1209,6 +1210,50 @@ G4BarrelRandomLerpEntryV1(void*, const float* bounds) {
   return value;
 }
 
+// Runs once at the first authoritative Submit, before its physics job is
+// dispatched. Never force this accumulator on later ticks: native integration
+// and interpolation must evolve together, including changing native intervals.
+bool BindInitialPhysicsPhase(void* context) {
+  namespace initial = a9tas::physics_initial_phase_v1;
+  const RunMode mode = static_cast<RunMode>(g_control.mode);
+  if (mode == RunMode::kNeutral ||
+      (g_control.fixed_delta_us != 8333 && g_control.fixed_delta_us != 6944))
+    return true;
+  if (mode == RunMode::kReplay && g_control.initial_phase_present == 0)
+    return true;  // Old recordings have no recoverable exact starting phase.
+  auto read = [](std::uintptr_t address, void* out, std::size_t size) {
+    const void* source = reinterpret_cast<const void*>(address);
+    const auto mapping = QueryMapping(source);
+    if (!MappingCovers(mapping, source, size) || !(mapping.protection & PROT_READ))
+      return false;
+    std::memcpy(out, source, size);
+    return true;
+  };
+  initial::Binding binding{};
+  if (mode == RunMode::kRecord) {
+    g_control.initial_phase_present = 0;
+    std::memset(g_control.initial_phase_bits, 0, sizeof(g_control.initial_phase_bits));
+    if (initial::Resolve(read, reinterpret_cast<std::uintptr_t>(context), &binding)) {
+      std::memcpy(g_control.initial_phase_bits, &binding.phase, sizeof(binding.phase));
+      g_control.initial_phase_present = 1;
+    }
+    return true;  // Unproven layouts retain the existing v4 recording path.
+  }
+  initial::Snapshot source{};
+  std::memcpy(&source, g_control.initial_phase_bits, sizeof(source));
+  if (g_control.initial_phase_present != 1 || !initial::Valid(source) ||
+      !initial::Resolve(read, reinterpret_cast<std::uintptr_t>(context), &binding))
+    return false;
+  auto* target = reinterpret_cast<void*>(binding.phase_address);
+  if (!PrivateRw(QueryMapping(target), target, sizeof(source))) return false;
+  std::memcpy(target, &source, sizeof(source));
+  initial::Snapshot after{};
+  std::memcpy(&after, target, sizeof(after));
+  if (std::memcmp(&after, &source, sizeof(source)) == 0) return true;
+  std::memcpy(target, &binding.phase, sizeof(binding.phase));
+  return false;
+}
+
 extern "C" __attribute__((noinline, visibility("hidden"))) std::uint32_t
 G4SubmitBeforeV1(void* context, std::int64_t* delta_token) {
   __atomic_fetch_add(&g_evidence.wrapper_entries[kSubmitHook], 1ULL,
@@ -1256,6 +1301,11 @@ G4SubmitBeforeV1(void* context, std::int64_t* delta_token) {
   if (result == bridge::Result::kObserved && receipt.first_call_in_tick &&
       g_evidence.status != kFault) {
     g_tick_semantic_start = semantic_start;
+    if (g_runtime.tick.coordinator.tick == 0 && !BindInitialPhysicsPhase(context)) {
+      Fault(kErrorPhysicsIdentity);
+      UnlockRuntime();
+      return 0;
+    }
     if (g_control.mode == static_cast<std::uint32_t>(RunMode::kRecord)) {
       if (g_record_physics_snapshot.captured) {
         Fault(kErrorPhysicsCapture);
@@ -1279,6 +1329,37 @@ G4SubmitBeforeV1(void* context, std::int64_t* delta_token) {
   }
   UnlockRuntime();
   return result == bridge::Result::kObserved ? 1u : 0u;
+}
+
+void ReplayNitroAtQualifiedBoundary(std::uint32_t hook, std::uint32_t tid) {
+  if (g_control.mode == static_cast<std::uint32_t>(RunMode::kReplay)) {
+    std::uint32_t completed = 0;
+    const auto service = __atomic_load_n(
+    reinterpret_cast<const std::uintptr_t*>(
+        g_control.expected_interval_owner + kNitroServiceOffset),
+        __ATOMIC_RELAXED);
+    if (service > UINTPTR_MAX - 8 ||
+        service + 8 != g_control.expected_nitro_state) {
+      Fault(kErrorNitroIdentity);
+    } else {
+      const std::uint32_t planned =
+          g_runtime.input_action.replay_packet_present &&
+                  (g_runtime.input_action.packet.skip_override_flags &
+                   recording::kSkipNitroActivation) == 0
+              ? g_runtime.input_action.packet.nitro_activation_count
+              : 0;
+      for (; completed < planned; ++completed)
+        G4NitroOriginalV1(
+            reinterpret_cast<void*>(g_control.expected_nitro_state));
+    }
+    const bridge::Result accounted =
+        bridge::AccountInjectedNitroCalls(&g_runtime, completed);
+    if (accounted != bridge::Result::kObserved) {
+      Note(hook, accounted, tid);
+    } else {
+      g_evidence.injected_nitro_calls += completed;
+    }
+  }
 }
 
 extern "C" __attribute__((noinline, visibility("hidden"))) std::uint32_t
@@ -1321,34 +1402,7 @@ G4IntervalBeforeV1(void* owner) {
       g_evidence.status != kFault) {
     g_barrel_capture = {};
     g_barrel_capture_tick = g_runtime.input_action.tick;
-    if (g_control.mode == static_cast<std::uint32_t>(RunMode::kReplay)) {
-      std::uint32_t completed = 0;
-      const auto service = __atomic_load_n(
-      reinterpret_cast<const std::uintptr_t*>(
-          g_control.expected_interval_owner + kNitroServiceOffset),
-          __ATOMIC_RELAXED);
-      if (service > UINTPTR_MAX - 8 ||
-          service + 8 != g_control.expected_nitro_state) {
-        Fault(kErrorNitroIdentity);
-      } else {
-        const std::uint32_t planned =
-            g_runtime.input_action.replay_packet_present &&
-                    (g_runtime.input_action.packet.skip_override_flags &
-                     recording::kSkipNitroActivation) == 0
-                ? g_runtime.input_action.packet.nitro_activation_count
-                : 0;
-        for (; completed < planned; ++completed)
-          G4NitroOriginalV1(
-              reinterpret_cast<void*>(g_control.expected_nitro_state));
-      }
-      const bridge::Result accounted =
-          bridge::AccountInjectedNitroCalls(&g_runtime, completed);
-      if (accounted != bridge::Result::kObserved) {
-        Note(kTickHook, accounted, tid);
-      } else {
-        g_evidence.injected_nitro_calls += completed;
-      }
-    }
+    ReplayNitroAtQualifiedBoundary(kTickHook, tid);
   }
   UnlockRuntime();
   return bridge::IntervalAfterQualified(result) ? 1u : 0u;
@@ -1440,6 +1494,13 @@ G4FinalAfterV1(void* player) {
 #endif
       );
   Note(kFinalWriterHook, result, tid);
+  // Interpolation-only ticks never enter G4IntervalBeforeV1. Their recorded
+  // button events still belong to this tick, not to the next integration.
+  // Use the qualified completed-frame callback on the game execution path,
+  // not the host/Submit thread. Integrated ticks retain their existing timing.
+  if (result == bridge::Result::kObserved && g_evidence.status != kFault &&
+      g_runtime.input_action.receipt.physics_interval_calls == 0)
+    ReplayNitroAtQualifiedBoundary(kFinalWriterHook, tid);
   if (result == bridge::Result::kObserved && g_evidence.status != kFault &&
       (g_control.mode == static_cast<std::uint32_t>(RunMode::kRecord) ||
        g_control.mode == static_cast<std::uint32_t>(RunMode::kReplay))) {

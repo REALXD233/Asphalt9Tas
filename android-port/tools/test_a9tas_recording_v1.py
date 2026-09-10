@@ -66,6 +66,26 @@ def make_manifest(recording: bytes, target_tick: int = 2) -> dict:
 
 
 class RecordingContainerTests(unittest.TestCase):
+    def test_sparse_phase_archive_roundtrip(self) -> None:
+        raw = bytearray(make_recording())
+        raw = raw[:64 + 3 * 144]  # Three logical ticks with no native steps.
+        struct.pack_into('<I', raw, 28, 0)
+        struct.pack_into('<I', raw, 32, 6944)
+        for tick in range(3):
+            struct.pack_into('<Q', raw, 64 + tick * 144 + 8, tick * 6944000)
+        for version, flags in ((4, 0x3f), (5, 0x7f)):
+            struct.pack_into('<I', raw, 8, version)
+            struct.pack_into('<I', raw, 36, flags)
+            raw[56:64] = bytes(8) if version == 4 else struct.pack('<ff', -0.009, 1 / 60)
+            source = bytes(raw)
+            packed = encode_archive(make_manifest(source), source)
+            self.assertEqual(decode_archive(packed).recording, source)
+            self.assertEqual(decode_a9g4r2(source).interval_count, 0)
+        for residual in (float('nan'), float('inf'), 0.01, -1.0):
+            struct.pack_into('<f', raw, 56, residual)
+            with self.assertRaises(RecordingError):
+                decode_a9g4r2(bytes(raw))
+
     def test_round_trip_is_byte_exact_and_deterministic(self) -> None:
         recording = make_recording()
         manifest = make_manifest(recording)

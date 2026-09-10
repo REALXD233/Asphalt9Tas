@@ -7,7 +7,7 @@
 
 namespace a9tas::g4_multi_hook_runtime_v1 {
 
-inline constexpr std::uint32_t kVersion = 13;
+inline constexpr std::uint32_t kVersion = 14;
 inline constexpr std::uint32_t kHookCount = 8;
 inline constexpr std::uint32_t kRandomHookCount = 2;
 inline constexpr std::uint32_t kSetterCount = 3;
@@ -238,6 +238,8 @@ inline constexpr std::uint32_t kRecordingBundleVersion = 3;
 // Explicit opt-in format: absent interval groups represent complete logical
 // updates with no integration. Existing v2/v3 files remain dense.
 inline constexpr std::uint32_t kSparseRecordingBundleVersion = 4;
+inline constexpr std::uint32_t kPhaseRecordingBundleVersion = 5;
+inline constexpr std::uint32_t kPhaseRecordingBundleFlags = 0x7f;
 enum RecordingBundleFlag : std::uint32_t {
   kBundleAdjustedBrakeSteering = 1u << 0,
   kBundleNaturalNitro = 1u << 1,
@@ -377,6 +379,10 @@ struct alignas(64) Control {
   std::uint32_t pending_state;
   std::uint32_t pending_generation;
   std::uint32_t pending_reserved;
+  // v14: v5 archive's exact pre-first-Submit phase; 0 absent, 1 available.
+  std::uint32_t initial_phase_bits[2];
+  std::uint32_t initial_phase_present;
+  std::uint32_t initial_phase_reserved;
 };
 
 struct alignas(64) Evidence {
@@ -437,7 +443,7 @@ struct alignas(64) Evidence {
   std::uint64_t pending_activations;
 };
 
-static_assert(sizeof(Control) == 576, "G4 fast replay control ABI");
+static_assert(sizeof(Control) == 640, "G4 phase-aware control ABI");
 static_assert(sizeof(Evidence) == 832,
               "G4 deterministic barrel PRNG evidence ABI");
 static_assert(offsetof(Control, target_entry) == 144,

@@ -67,6 +67,11 @@ static bool run(unsigned hz, unsigned delta, unsigned frames) {
     }
     counts.push_back(count);
     if(count==0) ++zero_frames;
+    for (unsigned event=0; event<tick%3; ++event) {
+      bool forward=false;
+      CHECK(b::ObserveNaturalNitroCall(state.get(), &forward)==b::Result::kObserved);
+      CHECK(forward);
+    }
     CHECK(b::ObserveFinalWriterReturn(cfg,state.get(),cfg.tick.expected_player,
       cfg.tick.expected_player_vptr,11,&scope)==b::Result::kObserved);
     CHECK(b::ObserveTickEndReturn(cfg,state.get(),scope.caller_return,11)==
@@ -119,14 +124,19 @@ static bool run(unsigned hz, unsigned delta, unsigned frames) {
       CHECK(b::ObserveIntervalBeforeOriginal(cfg,state.get(),cfg.tick.expected_interval_owner,
         cfg.tick.expected_interval_owner_vptr,3,10,0,&before)==
         (ordinal==0?b::Result::kObserved:b::Result::kRepeatedInterval));
+      if (ordinal==0)
+        CHECK(b::AccountInjectedNitroCalls(state.get(),tick%3)==b::Result::kObserved);
       CHECK(b::ObserveIntervalAfterOriginal(cfg,state.get(),g4::FloatBits(1.f/60),&after)==b::Result::kObserved);
       CHECK(!after.override_after_original);
     }
     b::CompletedFrameScopeV1 scope{cfg.tick.game_base+cfg.tick.frame_event_scheduler_return_rva,1,11,tick};
     CHECK(b::ObserveFinalWriterReturn(cfg,state.get(),cfg.tick.expected_player,
       cfg.tick.expected_player_vptr,11,&scope)==b::Result::kObserved);
+    if (counts[tick]==0)
+      CHECK(b::AccountInjectedNitroCalls(state.get(),tick%3)==b::Result::kObserved);
     CHECK(b::ObserveTickEndReturn(cfg,state.get(),scope.caller_return,11)==
       (tick+1==frames?b::Result::kComplete:b::Result::kObserved));
+    CHECK(state->receipts[tick].injected_nitro_calls==tick%3);
   }
   CHECK(state->receipt_count==frames && state->tick.coordinator.replay_head==frames);
   CHECK(state->input_action.interval_cursor==samples.size());
@@ -134,6 +144,19 @@ static bool run(unsigned hz, unsigned delta, unsigned frames) {
   return true;
 }
 static bool malformed_groups() {
+  // Reproduce the missing-Interval bug: nonzero planned event, zero native
+  // calls. Do not consume the tick until the event is actually accounted.
+  for (unsigned planned : {1u,2u}) {
+    g4::StateV1 missed{};
+    missed.tick_open=true; missed.replay_packet_present=true;
+    missed.packet.nitro_activation_count=planned;
+    g4::TickReceiptV1 done{};
+    CHECK(g4::EndTick(&missed,{},&done,true)==g4::Result::kNitroCountMismatch);
+    CHECK(missed.tick_open);
+    CHECK(g4::AccountInjectedNitroCalls(&missed,planned)==g4::Result::kReady);
+    CHECK(g4::EndTick(&missed,{},&done,true)==g4::Result::kReady);
+    CHECK(done.recorded_nitro_calls==planned);
+  }
   g4::IntervalSampleV1 samples[]={{1,0,g4::FloatBits(1.f/60)}, {3,0,g4::FloatBits(1.f/120)}};
   g4::IntervalReplayViewV1 view{samples,2};
   CHECK(g4::IntervalSequenceValid(view,5,true)); // leading, middle and trailing gaps

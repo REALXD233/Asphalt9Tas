@@ -9,6 +9,7 @@
 #undef main
 
 #include "g4_multi_hook_runtime_v1.h"
+#include "physics_initial_phase_v1.h"
 #include "g8_runtime_build_profile_v1.h"
 #include "race_lifecycle_object_resolver_v1.h"
 #include "status_observation_policy_v1.h"
@@ -570,10 +571,15 @@ bool ReadReplayBundle(const char* path, std::uint32_t expected_frames,
   const bool current_bundle =
       header.version == protocol::kRecordingBundleVersion &&
       header.flags == protocol::kRecordingBundleFlags;
-  const bool sparse_bundle =
+  const bool phase_bundle =
+      header.version == protocol::kPhaseRecordingBundleVersion &&
+      header.flags == protocol::kPhaseRecordingBundleFlags;
+  a9tas::physics_initial_phase_v1::Snapshot initial_phase{};
+  std::memcpy(&initial_phase, header.reserved, sizeof(initial_phase));
+  const bool sparse_bundle = phase_bundle || (
       header.version == protocol::kSparseRecordingBundleVersion &&
       header.flags == protocol::kSparseRecordingBundleFlags &&
-      (header.fixed_delta_us == 8333 || header.fixed_delta_us == 6944);
+      (header.fixed_delta_us == 8333 || header.fixed_delta_us == 6944));
   if (std::memcmp(header.magic, protocol::kRecordingBundleMagic,
                   sizeof(header.magic)) != 0 ||
       (!legacy_bundle && !current_bundle && !sparse_bundle) ||
@@ -588,7 +594,9 @@ bool ReadReplayBundle(const char* path, std::uint32_t expected_frames,
       header.fixed_delta_us > recording::kMaximumFixedIntervalUs ||
       header.session_id == 0 || header.generation == 0 ||
       header.reserved0 != 0 ||
-      std::memcmp(header.reserved, zero.reserved, sizeof(header.reserved)) != 0)
+      (phase_bundle ? !a9tas::physics_initial_phase_v1::Valid(initial_phase)
+                    : std::memcmp(header.reserved, zero.reserved, sizeof(header.reserved)) != 0) ||
+      (phase_bundle && header.fixed_delta_us != 8333 && header.fixed_delta_us != 6944))
     return false;
   const std::size_t expected_size =
       sizeof(header) + sizeof(recording::RecordingFrameV1) * header.frame_count +
@@ -3881,6 +3889,14 @@ int main(int argc, char** argv) {
                                 : protocol::kRecordingBundleFlags;
     header.session_id = control.session_id;
     header.generation = control.generation;
+    if (sparse_bundle && control.initial_phase_present == 1) {
+      a9tas::physics_initial_phase_v1::Snapshot phase{};
+      std::memcpy(&phase, control.initial_phase_bits, sizeof(phase));
+      if (!a9tas::physics_initial_phase_v1::Valid(phase)) return 1;
+      header.version = protocol::kPhaseRecordingBundleVersion;
+      header.flags = protocol::kPhaseRecordingBundleFlags;
+      std::memcpy(header.reserved, &phase, sizeof(phase));
+    }
     FILE* output = read_buffers ? std::fopen(output_path, "wb") : nullptr;
     bool written = output != nullptr;
     if (written)
@@ -3891,8 +3907,9 @@ int main(int argc, char** argv) {
                             intervals.size(), output) == intervals.size();
     if (output != nullptr && std::fclose(output) != 0) written = false;
   std::printf("G4_RECORD_DUMP passed=%d frames=%zu intervals=%zu "
-              "physics_valid=1\n",
-                written ? 1 : 0, frames.size(), intervals.size());
+              "physics_valid=1 format_version=%u initial_phase=%u\n",
+                written ? 1 : 0, frames.size(), intervals.size(),
+                header.version, control.initial_phase_present);
     return written ? 0 : 10;
   }
 
@@ -4454,6 +4471,11 @@ int main(int argc, char** argv) {
       control.expected_barrel_owner_vptr = runtime.barrel_owner_vptr;
     }
     if (replay_action) {
+      control.initial_phase_present =
+          replay_bundle.header.version == protocol::kPhaseRecordingBundleVersion;
+      control.initial_phase_reserved = 0;
+      std::memcpy(control.initial_phase_bits, replay_bundle.header.reserved,
+                  sizeof(control.initial_phase_bits));
       const std::size_t frame_bytes =
           replay_bundle.frames.size() * sizeof(replay_bundle.frames[0]);
       const std::size_t interval_bytes =

@@ -87,14 +87,19 @@ def decode_a9g4r2(data: bytes) -> A9G4R2Summary:
      reserved0, reserved) = fields
     legacy = version == A9G4R2_LEGACY_VERSION and flags == A9G4R2_LEGACY_FLAGS
     current = version == A9G4R2_VERSION and flags == A9G4R2_FLAGS
-    if (magic != A9G4R2_MAGIC or not (legacy or current) or
+    phase = version == 5 and flags == 0x7f
+    sparse = (phase or (version == 4 and flags == 0x3f)) and fixed_delta_us in (8333, 6944)
+    residual, last_interval = struct.unpack('<ff', reserved)
+    valid_phase = (math.isfinite(residual) and math.isfinite(last_interval)
+                   and last_interval > 0 and -last_interval <= residual <= 0)
+    if (magic != A9G4R2_MAGIC or not (legacy or current or sparse) or
             header_size != A9G4R2_HEADER.size or
             frame_size != A9G4R2_FRAME.size or
             interval_size != A9G4R2_INTERVAL.size or
-            frame_count == 0 or interval_count == 0 or
+            frame_count == 0 or (interval_count == 0 and not sparse) or
             not 1_000 <= fixed_delta_us <= 100_000 or
             session_id == 0 or generation == 0 or reserved0 != 0 or
-            reserved != bytes(8)):
+            (not valid_phase if phase else reserved != bytes(8))):
         raise RecordingError("a9g4r2.header_identity")
     expected_size = (A9G4R2_HEADER.size + frame_count * A9G4R2_FRAME.size +
                      interval_count * A9G4R2_INTERVAL.size)
@@ -118,7 +123,7 @@ def decode_a9g4r2(data: bytes) -> A9G4R2Summary:
                 respawn != 0 or padding != bytes(3) or
                 (legacy and any(value != 0.0
                                 for value in (ax, ay, az, rbx0, rbx1))) or
-                (current and any(not math.isfinite(value) or
+                ((current or sparse) and any(not math.isfinite(value) or
                                  abs(value) > 1_000_000.0
                                  for value in (ax, ay, az, rbx0, rbx1))) or
                 not _finite_raw_floats(transform, 16) or
@@ -148,7 +153,7 @@ def decode_a9g4r2(data: bytes) -> A9G4R2Summary:
             raise RecordingError(f"a9g4r2.interval_ordinal.{index}")
         next_ordinal += 1
         calls_per_tick[tick] += 1
-    if any(count == 0 for count in calls_per_tick):
+    if not sparse and any(count == 0 for count in calls_per_tick):
         raise RecordingError("a9g4r2.missing_tick_interval")
     return A9G4R2Summary(
         version=version,

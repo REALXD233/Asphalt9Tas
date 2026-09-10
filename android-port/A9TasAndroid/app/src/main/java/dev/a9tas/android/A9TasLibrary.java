@@ -768,7 +768,8 @@ final class A9TasLibrary {
             // full has already passed archive/source validation. Read its
             // explicit format version without rescanning every frame.
             input.seek(8);
-            sparseIntervals = Integer.reverseBytes(input.readInt()) == 4;
+            int sourceVersion = Integer.reverseBytes(input.readInt());
+            sparseIntervals = sourceVersion == 4 || sourceVersion == 5;
             input.seek(intervalOffset);
             for (long index = 0; index < summary.intervalCount; ++index) {
                 input.readFully(interval);

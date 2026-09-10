@@ -144,6 +144,29 @@ public final class LibraryRegressionMain {
                     sparseRaw.toFile(), A9TasLibrary.sha256(sparseRaw.toFile()));
             check(branch.summary.frameCount == 4 && branch.summary.fixedDeltaUs == 6944,
                     "splice after zero-integration prefix preserves tick timeline");
+            byte[] phased = sparse.clone();
+            ByteBuffer pb = ByteBuffer.wrap(phased).order(ByteOrder.LITTLE_ENDIAN);
+            pb.putInt(8, 5); pb.putInt(36, 0x7f);
+            pb.putFloat(56, -0.009f); pb.putFloat(60, 1.0f / 60.0f);
+            Path phasedRaw = root.resolve("sparse-144/recordings/recording-2-3.a9g4r2");
+            Files.write(phasedRaw, phased);
+            var phasedEntry = A9TasLibrary.pack(sparseContext, phasedRaw.toFile(),
+                    A9TasLibrary.sha256(phasedRaw.toFile()), metadata);
+            var phasedPrefix = A9TasLibrary.materializeReplaySource(sparseContext, phasedEntry, 0);
+            check(A9TasArchive.inspectSource(phasedPrefix).version == 5,
+                    "phase archive accepts zero-integration prefix");
+            check(Arrays.equals(Arrays.copyOfRange(Files.readAllBytes(phasedPrefix.toPath()), 56, 64),
+                    Arrays.copyOfRange(phased, 56, 64)), "prefix retains exact initial phase bits");
+            var phasedBranch = A9TasBranchEditor.splice(sparseContext, phasedEntry, 0,
+                    phasedRaw.toFile(), A9TasLibrary.sha256(phasedRaw.toFile()));
+            check(phasedBranch.summary.frameCount == 4, "phase archive splice supported");
+            pb.putFloat(56, Float.NaN); Files.write(phasedRaw, phased);
+            rejects(() -> A9TasArchive.inspectSource(phasedRaw.toFile()), "NaN phase rejected");
+            pb.putFloat(56, 0.001f); Files.write(phasedRaw, phased);
+            rejects(() -> A9TasArchive.inspectSource(phasedRaw.toFile()), "positive residual rejected");
+            pb.putFloat(56, -0.009f); pb.putInt(8, 4); pb.putInt(36, 0x3f);
+            Files.write(phasedRaw, phased);
+            rejects(() -> A9TasArchive.inspectSource(phasedRaw.toFile()), "legacy reserved bytes remain reserved");
             byte[] empty = Arrays.copyOf(sparse, 64 + 3 * 144);
             ByteBuffer.wrap(empty).order(ByteOrder.LITTLE_ENDIAN).putInt(28, 0);
             Path emptyRaw = root.resolve("sparse-144/empty.a9g4r2");

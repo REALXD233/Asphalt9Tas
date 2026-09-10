@@ -138,8 +138,13 @@ final class A9TasArchive {
         byte[] reserved = take(header, 8);
         boolean legacy = source.version == 2 && flags == 0x0f;
         boolean current = source.version == 3 && flags == 0x1f;
-        boolean sparse = source.version == 4 && flags == 0x3f &&
+        boolean phase = source.version == 5 && flags == 0x7f;
+        boolean sparse = (phase || (source.version == 4 && flags == 0x3f)) &&
                 (source.fixedDeltaUs == 8333 || source.fixedDeltaUs == 6944);
+        ByteBuffer phaseData = little(reserved);
+        float residual = phaseData.getFloat(), lastInterval = phaseData.getFloat();
+        boolean validPhase = Float.isFinite(residual) && Float.isFinite(lastInterval)
+                && lastInterval > 0 && residual <= 0 && residual >= -lastInterval;
         long expected = A9G4R2_HEADER_SIZE + source.frameCount * A9G4R2_FRAME_SIZE +
                 source.intervalCount * A9G4R2_INTERVAL_SIZE;
         if (!(legacy || current || sparse) || headerSize != A9G4R2_HEADER_SIZE ||
@@ -147,7 +152,7 @@ final class A9TasArchive {
                 source.frameCount == 0 || (source.intervalCount == 0 && !sparse) ||
                 source.fixedDeltaUs < 1_000 || source.fixedDeltaUs > 100_000 ||
                 source.sessionId == 0 || source.generation == 0 || reserved0 != 0 ||
-                !allZero(reserved) || expected != size)
+                (phase ? !validPhase : !allZero(reserved)) || expected != size)
             fail("a9g4r2.header_identity");
 
         for (long index = 0; index < source.frameCount; ++index) {

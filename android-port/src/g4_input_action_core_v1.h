@@ -616,6 +616,12 @@ inline Result EndTick(StateV1* state, const IntervalReplayViewV1& replay,
   if (state->receipt.physics_interval_calls == 0 && !allow_zero_integration_updates)
     return Result::kWrongOrder;
   if (state->replay_packet_present) {
+    const std::uint32_t planned_nitro =
+        (state->packet.skip_override_flags & recording::kSkipNitroActivation) == 0
+            ? state->packet.nitro_activation_count : 0;
+    if (state->receipt.injected_nitro_calls != planned_nitro ||
+        state->receipt.recorded_nitro_calls != planned_nitro)
+      return Result::kNitroCountMismatch;
     if (state->interval_cursor > replay.sample_count)
       return Result::kIntervalMismatch;
     const bool empty_group = state->interval_cursor == replay.sample_count ||
