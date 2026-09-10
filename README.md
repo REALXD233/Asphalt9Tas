@@ -12,6 +12,7 @@ Asphalt9Tas 是面向 Android 版《狂野飙车 9》的研究型 TAS 工具。�
 - 改进 Android Root 扫描、共享录像导入与运行状态诊断。
 - 补充碰撞网格、材质区域、小地图节点的只读分析工具；这些工具仍属于研究性功能，不能把显示节点直接等同于已验证的检查点/重置触发区。
 - 最新修订保留首 Tick 故障的回调来源和底层错误码。Android 7 ARM64 上报告的 `error=13` 尚待实机复现确认，不能视为已修复。
+- 后续回执已定位到首个 Physics Interval 之前的车辆回调。现已提交该边界的针对性修复，独立回归通过，受影响手机的完整录制验证待完成：[修复与测试边界](android-port/docs/EARLY_FINAL_BOUNDARY_FIX_20260910.md)。
 
 核心入口：`android-port/src/payload_g4_multi_hook_runtime_v1.cpp`（Hook 与执行）、`g4_g3_adapter_v1.h` / `g3_tick_coordinator_v1.h`（Tick 协调）、`g4_input_action_core_v1.h`（输入与状态）、`barrel_prng_v1.h`（确定性随机数）。APK 操作流程见 `android-port/A9TasAndroid/app/src/main/java/dev/a9tas/android/SessionOrchestrator.java`。
 

@@ -493,6 +493,15 @@ inline Result ObserveFinalWriterReturn(const Config& config, State* state,
   if (state->complete != 0) return Result::kComplete;
   if (state->coordinator.lifecycle == coordinator::Lifecycle::kArmed)
     return Result::kWaitingForRace;
+  // A player update can return after Submit opened the tick but before the
+  // first qualified physics interval. It is not this tick's physics-final
+  // boundary: leave the tick open and wait for a post-interval return. Never
+  // manufacture an interval or publish/correct a frame from this callback.
+  if (state->coordinator.lifecycle == coordinator::Lifecycle::kInRace &&
+      state->coordinator.tick_phase == coordinator::TickPhase::kBegun) {
+    ++state->idle_final_writer_returns;
+    return Result::kWaitingForTick;
+  }
   if (state->coordinator.tick_phase == coordinator::TickPhase::kClosed) {
     ++state->idle_final_writer_returns;
     return Result::kWaitingForTick;
