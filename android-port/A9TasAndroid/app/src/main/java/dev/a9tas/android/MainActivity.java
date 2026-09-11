@@ -52,6 +52,7 @@ public final class MainActivity extends Activity {
     private Spinner recordingSortSpinner;
     private Spinner controlModeSpinner;
     private Spinner replaySpeedSpinner;
+    private Spinner recordSlowmoSpinner;
     private Spinner recordTickRateSpinner;
     private EditText titleInput;
     private EditText mapInput;
@@ -185,6 +186,11 @@ public final class MainActivity extends Activity {
                 replayButton.setEnabled(licensed && prepared && !active &&
                         !branchPending && !recoveryRequired && !recordings.isEmpty());
                 replaySpeedSpinner.setEnabled(!active && !branchPending);
+                recordSlowmoSpinner.setEnabled(!active && !branchPending);
+                int currentSlowmo = preferences.getInt("record_slowmo_divisor", 1);
+                int currentSlowmoIndex = currentSlowmo == 90 ? 1 : currentSlowmo == 75 ? 2 : currentSlowmo == 2 ? 3 : currentSlowmo == 4 ? 4 : currentSlowmo == 8 ? 5 : 0;
+                if (recordSlowmoSpinner.getSelectedItemPosition() != currentSlowmoIndex)
+                    recordSlowmoSpinner.setSelection(currentSlowmoIndex);
                 recordTickRateSpinner.setEnabled(!active && !branchPending);
                 branchRecordButton.setEnabled(licensed && prepared && !active &&
                         !recoveryRequired && !recordings.isEmpty());
@@ -249,6 +255,7 @@ public final class MainActivity extends Activity {
         recordingSortSpinner = findViewById(R.id.recordingSortSpinner);
         controlModeSpinner = findViewById(R.id.controlModeSpinner);
         replaySpeedSpinner = findViewById(R.id.replaySpeedSpinner);
+        recordSlowmoSpinner = findViewById(R.id.recordSlowmoSpinner);
         recordTickRateSpinner = findViewById(R.id.recordTickRateSpinner);
         titleInput = findViewById(R.id.titleInput);
         mapInput = findViewById(R.id.mapInput);
@@ -355,6 +362,23 @@ public final class MainActivity extends Activity {
                 android.R.layout.simple_spinner_dropdown_item,
                 new String[]{"1× 标准", "2×", "4×", "8×"}));
         final int[] replaySpeedValues = {1, 2, 4, 8};
+        final int[] slowmoDivisors = {1, 90, 75, 2, 4, 8};
+        recordSlowmoSpinner.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item,
+                new String[]{"1× 正常录制", "0.9× 慢速（实验）", "0.75× 慢速（实验）", "0.5× 慢速（实验）", "0.25× 慢速（实验）", "0.125× 慢速（实验）"}));
+        int savedSlowmo = getSharedPreferences("session", MODE_PRIVATE)
+                .getInt("record_slowmo_divisor", 1);
+        recordSlowmoSpinner.setSelection(savedSlowmo == 90 ? 1 : savedSlowmo == 75 ? 2 : savedSlowmo == 2 ? 3 : savedSlowmo == 4 ? 4 : savedSlowmo == 8 ? 5 : 0);
+        recordSlowmoSpinner.setOnItemSelectedListener(
+                new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent,
+                                                  View view, int position, long id) {
+                getSharedPreferences("session", MODE_PRIVATE).edit()
+                        .putInt("record_slowmo_divisor", slowmoDivisors[
+                                Math.max(0, Math.min(slowmoDivisors.length - 1, position))]).apply();
+            }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
         recordTickRateSpinner.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
                 new String[]{"60 Tick/s · 16.667 ms（默认）",

@@ -57,6 +57,7 @@ final class TasOverlayController {
     private Button branchButton;
     private Button restoreButton;
     private Button speedButton;
+    private Button slowmoButton;
     private Button hardResumeButton;
     private Button metadataToggleButton;
     private LinearLayout metadataContainer;
@@ -166,6 +167,7 @@ final class TasOverlayController {
         branchButton = null;
         restoreButton = null;
         speedButton = null;
+        slowmoButton = null;
         hardResumeButton = null;
         metadataToggleButton = null;
         metadataContainer = null;
@@ -499,6 +501,16 @@ final class TasOverlayController {
         speedButton = button("回放速度", 0xFF2B303B);
         speedButton.setOnClickListener(view -> cycleReplaySpeed());
         addButton(content, speedButton, 8);
+        slowmoButton = button("录制速度", 0xFF2B303B);
+        slowmoButton.setOnClickListener(view -> {
+            int current = preferences.getInt("record_slowmo_divisor", 1);
+            int next = current == 1 ? 90 : current == 90 ? 75 : current == 75 ? 2 : current == 2 ? 4 : current == 4 ? 8 : 1;
+            preferences.edit().putInt("record_slowmo_divisor", next)
+                    .putString("overlay_feedback", "录制速度已设置 · 下一次开始录制或加载前缀时生效").apply();
+            slowmoButton.setText("下次录制速度 · " + (next == 1 ? "1" : next == 90 ? "0.9" : next == 75 ? "0.75" : next == 2 ? "0.5" : next == 4 ? "0.25" : "0.125") + "×");
+            view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP);
+        });
+        addButton(content, slowmoButton, 8);
 
         addSectionTitle(content, "环境、恢复与高级操作");
         restoreButton = button("恢复原始游戏状态", 0xFF493036);
@@ -691,6 +703,12 @@ final class TasOverlayController {
                 preferences.getBoolean("session_hooks_installed", false)));
         int speed = preferences.getInt("replay_speed_factor", 1);
         setTextIfChanged(speedButton, "回放速度 · " + speed + "×");
+        if (slowmoButton != null) {
+            int divisor = preferences.getInt("record_slowmo_divisor", 1);
+            setTextIfChanged(slowmoButton, "下次录制速度 · " + (divisor == 90 ? "0.9" : divisor == 75 ? "0.75" : divisor == 2 ? "0.5" : divisor == 4 ? "0.25" : divisor == 8 ? "0.125" : "1") + "×");
+            slowmoButton.setEnabled(!active && !waiting);
+            slowmoButton.setAlpha(slowmoButton.isEnabled() ? 1f : 0.42f);
+        }
         startButton.setAlpha(startButton.isEnabled() ? 1f : 0.42f);
         checkpointButton.setBackground(roundRect(
                 checkpointUiPending ? 0xFF0A84FF : 0xFF2B303B, 13));

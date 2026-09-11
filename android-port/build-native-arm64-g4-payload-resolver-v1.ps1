@@ -41,21 +41,21 @@ if ($objectSymbols -notmatch 'a9tas_native_arm64_g4_payload_resolve_build_only_v
 
 $payloadHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $payload).Hash.ToLowerInvariant()
 $payloadSize = (Get-Item -LiteralPath $payload).Length
-if ($payloadHash -ne 'daf2b6d7e56e63df13be6123253589b07ef00caf7dc39f0bc2e28b6bbc7acd44' -or
-    $payloadSize -ne 4152064) {
+if ($payloadHash -ne '2294dafdcee3f97ca0805d8123ba59bea9be90d13cc46374662c60b057b30a55' -or
+    $payloadSize -ne 4152672) {
     throw 'pinned G4 payload identity drifted'
 }
 $symbols = (& $readelf -sW $payload) -join "`n"
 $expectedSymbols = @{
-    'a9tas_g4_command_v1' = '000000000000F640'
-    'a9tas_g4_control_data_v1' = '0000000000024550'
-    'a9tas_g4_evidence_data_v1' = '0000000000024558'
-    'a9tas_g4_runtime_data_v1' = '0000000000024560'
-    'a9tas_g4_build_profile_data_v1' = '0000000000024568'
-    'a9tas_g4_replay_frames_data_v1' = '0000000000024570'
-    'a9tas_g4_replay_intervals_data_v1' = '0000000000024578'
-    'a9tas_g4_recorded_frames_data_v1' = '0000000000024580'
-    'a9tas_g4_recorded_intervals_data_v1' = '0000000000024588'
+    'a9tas_g4_command_v1' = '000000000000F688'
+    'a9tas_g4_control_data_v1' = '0000000000024710'
+    'a9tas_g4_evidence_data_v1' = '0000000000024718'
+    'a9tas_g4_runtime_data_v1' = '0000000000024720'
+    'a9tas_g4_build_profile_data_v1' = '0000000000024728'
+    'a9tas_g4_replay_frames_data_v1' = '0000000000024730'
+    'a9tas_g4_replay_intervals_data_v1' = '0000000000024738'
+    'a9tas_g4_recorded_frames_data_v1' = '0000000000024740'
+    'a9tas_g4_recorded_intervals_data_v1' = '0000000000024748'
 }
 foreach ($entry in $expectedSymbols.GetEnumerator()) {
     $pattern = '(?m)^\s*\d+:\s+' + $entry.Value + '\s+\d+\s+(?:FUNC|OBJECT)\s+GLOBAL\s+DEFAULT\s+\d+\s+' + [regex]::Escape($entry.Key) + '$'
@@ -65,14 +65,14 @@ foreach ($entry in $expectedSymbols.GetEnumerator()) {
 }
 $allSymbols = (& $nm -n -S $payload) -join "`n"
 $expectedStorageSymbols = @{
-    '_ZN12_GLOBAL__N_19g_runtimeE' = @('00000000000245C0','00000000003d8930')
-    '_ZN12_GLOBAL__N_110g_evidenceE' = @('00000000003FCF80','0000000000000340')
-    '_ZN12_GLOBAL__N_19g_controlE' = @('00000000003FD2C0','0000000000000280')
-    '_ZN12_GLOBAL__N_120g_recorded_intervalsE' = @('00000000003FD6C0','0000000000177000')
-    '_ZN12_GLOBAL__N_117g_recorded_framesE' = @('0000000000574D00','000000000034bc00')
-    '_ZN12_GLOBAL__N_115g_build_profileE' = @('00000000008C0900','0000000000000180')
-    '_ZN12_GLOBAL__N_115g_replay_framesE' = @('00000000008C0A80','000000000034bc00')
-    '_ZN12_GLOBAL__N_118g_replay_intervalsE' = @('0000000000C0C680','0000000000177000')
+    '_ZN12_GLOBAL__N_19g_runtimeE' = @('0000000000024780','00000000003d8930')
+    '_ZN12_GLOBAL__N_110g_evidenceE' = @('00000000003FD180','0000000000000340')
+    '_ZN12_GLOBAL__N_19g_controlE' = @('00000000003FD4C0','0000000000000280')
+    '_ZN12_GLOBAL__N_120g_recorded_intervalsE' = @('00000000003FD8C0','0000000000177000')
+    '_ZN12_GLOBAL__N_117g_recorded_framesE' = @('0000000000574F00','000000000034bc00')
+    '_ZN12_GLOBAL__N_115g_build_profileE' = @('00000000008C0B00','0000000000000180')
+    '_ZN12_GLOBAL__N_115g_replay_framesE' = @('00000000008C0C80','000000000034bc00')
+    '_ZN12_GLOBAL__N_118g_replay_intervalsE' = @('0000000000C0C880','0000000000177000')
 }
 foreach ($entry in $expectedStorageSymbols.GetEnumerator()) {
     $address = $entry.Value[0]
@@ -83,12 +83,12 @@ foreach ($entry in $expectedStorageSymbols.GetEnumerator()) {
     }
 }
 $programHeaders = (& $readelf -lW $payload) -join "`n"
-if ($programHeaders -notmatch '(?m)^\s*LOAD\s+0x017b80\s+0x0000000000023B80\s+0x0000000000023B80\s+0x3d9370\s+0xd5fc00\s+RW\s+0x4000\s*$') {
+if ($programHeaders -notmatch '(?m)^\s*LOAD\s+0x017d40\s+0x0000000000023D40\s+0x0000000000023D40\s+0x3d93a0\s+0xd5fc40\s+RW\s+0x4000\s*$') {
     throw 'pinned G4 payload final RW PT_LOAD drifted'
 }
 $buildIdLine = (& $readelf -n $payload | Select-String 'Build ID:' | Select-Object -Last 1).Line
 $buildId = ($buildIdLine -replace '^.*Build ID:\s*','').Trim()
-if ($buildId -ne '7885519e1328ebd535d5d7070ab34d9eb01f518c') {
+if ($buildId -ne '1da494291bc9556274daf27d100b175f0a352e7e') {
     throw 'pinned G4 payload Build ID drifted'
 }
 
@@ -98,17 +98,17 @@ foreach ($forbidden in @('libhoudini','libnb.so','bootstrap_base','guest_trampol
         throw "native ARM64 resolver retained NativeBridge dependency: $forbidden"
     }
 }
-foreach ($token in @('kCommandRva = 0xF640',
-                      'kRuntimeStorageRva = 0x245C0',
-                      'kEvidenceStorageRva = 0x3FCF80',
-                      'kControlStorageRva = 0x3FD2C0',
-                      'kRecordedIntervalsStorageRva = 0x3FD6C0',
-                      'kRecordedFramesStorageRva = 0x574D00',
-                      'kBuildProfileStorageRva = 0x8C0900',
-                      'kReplayFramesStorageRva = 0x8C0A80',
-                      'kReplayIntervalsStorageRva = 0xC0C680',
-                      'kFinalRwRva = 0x23B80',
-                      'kFinalRwLogicalEndRva = 0xD83780',
+foreach ($token in @('kCommandRva = 0xF688',
+                      'kRuntimeStorageRva = 0x24780',
+                      'kEvidenceStorageRva = 0x3FD180',
+                      'kControlStorageRva = 0x3FD4C0',
+                      'kRecordedIntervalsStorageRva = 0x3FD8C0',
+                      'kRecordedFramesStorageRva = 0x574F00',
+                      'kBuildProfileStorageRva = 0x8C0B00',
+                      'kReplayFramesStorageRva = 0x8C0C80',
+                      'kReplayIntervalsStorageRva = 0xC0C880',
+                      'kFinalRwRva = 0x23D40',
+                      'kFinalRwLogicalEndRva = 0xD83980',
                       'relocated!=expected[index]',
                       'PrivateAnonymousBss',
                       'WritableRange',

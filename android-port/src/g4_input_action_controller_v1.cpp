@@ -9,6 +9,7 @@
 #undef main
 
 #include "g4_multi_hook_runtime_v1.h"
+#include "diagnostic_tick_row_v1.h"
 #include "physics_initial_phase_v1.h"
 #include "g8_runtime_build_profile_v1.h"
 #include "race_lifecycle_object_resolver_v1.h"
@@ -1309,6 +1310,7 @@ bool StaticControlValid(const protocol::Control& control,
                   sizeof(protocol::kControlMagic)) != 0 ||
       control.version != protocol::kVersion ||
       control.size != sizeof(protocol::Control) ||
+      !protocol::ValidRecordSlowmo(control.record_slowmo_divisor) ||
       control.frame_limit != limit || control.generation == 0 ||
       control.session_id == 0 ||
       control.expected_begin_owner == 0 ||
@@ -2406,6 +2408,15 @@ int FailG4(pid_t pid, g2::FrozenSet* frozen, bool uncertain,
 int main(int argc, char** argv) {
   using namespace g4_controller_v1;
   std::uint64_t record_delta_us = 16667;
+  std::uint64_t record_slowmo_divisor = 1;
+  if (const char* selected = std::getenv("A9TAS_RECORD_SLOWMO_DIVISOR")) {
+    if (!g2::ParseNumber(selected, 10, &record_slowmo_divisor) ||
+        (record_slowmo_divisor != 1 && record_slowmo_divisor != 2 &&
+         record_slowmo_divisor != 4 && record_slowmo_divisor != 8 && record_slowmo_divisor != 75 && record_slowmo_divisor != 90)) {
+      std::fprintf(stderr, "invalid recording slowmo code; expected 1/2/4/8/75/90\n");
+      return 2;
+    }
+  }
   if (const char* selected = std::getenv("A9TAS_RECORD_DELTA_US")) {
     if (!g2::ParseNumber(selected, 10, &record_delta_us) ||
         (record_delta_us != 16667 && record_delta_us != 8333 &&
@@ -3813,8 +3824,8 @@ int main(int argc, char** argv) {
     }
     for (std::uint32_t index = 0; receipts_written && index < limit; ++index) {
       const auto& receipt = state.receipts[index];
-      receipts_written = receipt.tick == index &&
-          receipt.physics_interval_calls > 0 &&
+      receipts_written = a9tas::diagnostic_tick_row_v1::Valid(
+          receipt.tick, index, receipt.physics_interval_calls, control.fixed_delta_us) &&
           std::fprintf(
               receipt_output,
               "%" PRIu64 ",%u,%u,%u,%u,%u,%u,%u\n",
@@ -4401,6 +4412,7 @@ int main(int argc, char** argv) {
     }
     control = existing;
     control.frame_limit = limit;
+    control.record_slowmo_divisor = static_cast<std::uint32_t>(record_slowmo_divisor);
     control.mode = static_cast<std::uint32_t>(
         (action == Action::kArmRecord ||
          action == Action::kArmLifecycleRecord || record_rearm_action)

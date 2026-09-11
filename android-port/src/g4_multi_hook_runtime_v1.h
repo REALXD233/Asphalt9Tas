@@ -383,6 +383,10 @@ struct alignas(64) Control {
   std::uint32_t initial_phase_bits[2];
   std::uint32_t initial_phase_present;
   std::uint32_t initial_phase_reserved;
+  // Optional extension in existing alignment padding. Zero is legacy 1x.
+  // Retained during replay for the atomic replay->record transition, but only
+  // applied in Record mode; never multiplies the replay speed.
+  std::uint32_t record_slowmo_divisor;
 };
 
 struct alignas(64) Evidence {
@@ -444,6 +448,21 @@ struct alignas(64) Evidence {
 };
 
 static_assert(sizeof(Control) == 640, "G4 phase-aware control ABI");
+inline constexpr bool ValidRecordSlowmo(std::uint32_t divisor) {
+  return divisor == 0 || divisor == 1 || divisor == 2 || divisor == 4 || divisor == 8 || divisor == 75 || divisor == 90;
+}
+inline constexpr std::uint32_t RecordSlowmoDivisor(std::uint32_t mode,
+                                                 std::uint32_t divisor) {
+  return mode == static_cast<std::uint32_t>(RunMode::kRecord) &&
+      ValidRecordSlowmo(divisor) && divisor != 0 ? (divisor == 90 ? 10u : divisor == 75 ? 4u : divisor) : 1u;
+}
+// Legacy values are divisors; 75/90 encode 3/4 and 9/10 speeds.
+inline constexpr std::uint32_t RecordSlowmoNumerator(std::uint32_t mode,
+                                                   std::uint32_t code) {
+  return mode == static_cast<std::uint32_t>(RunMode::kRecord) ? (code == 90 ? 9u : code == 75 ? 3u : 1u) : 1u;
+}
+static_assert(offsetof(Control, record_slowmo_divisor) == 592,
+              "Slowmo extends control padding without moving existing fields");
 static_assert(sizeof(Evidence) == 832,
               "G4 deterministic barrel PRNG evidence ABI");
 static_assert(offsetof(Control, target_entry) == 144,

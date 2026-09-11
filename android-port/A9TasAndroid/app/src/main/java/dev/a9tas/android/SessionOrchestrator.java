@@ -148,6 +148,7 @@ final class SessionOrchestrator {
         final BuildProfileRegistry.Profile profile;
         final ArtifactRegistry.Backend backend;
         int recordDeltaUs = 16667;
+        int recordSlowmoDivisor = 1;
 
         Identity(int pid, long startTicks, long base, String packageName,
                  String processName, String nativeSha,
@@ -1522,6 +1523,8 @@ final class SessionOrchestrator {
         Identity identity = new Identity(pid, startTicks, base, packageName, processName,
                 nativeSha, profile, backend);
         identity.recordDeltaUs = stableRecordDeltaUs(preferences);
+        int slowmo = preferences.getInt("record_slowmo_divisor", 1);
+        identity.recordSlowmoDivisor = slowmo == 2 || slowmo == 4 || slowmo == 8 || slowmo == 75 || slowmo == 90 ? slowmo : 1;
         return identity;
     }
 
@@ -1839,6 +1842,8 @@ final class SessionOrchestrator {
                                      String cancellationSignal) {
         StringBuilder command = new StringBuilder("A9TAS_RECORD_DELTA_US=")
                 .append(identity.recordDeltaUs).append(' ')
+                .append("A9TAS_RECORD_SLOWMO_DIVISOR=")
+                .append(identity.recordSlowmoDivisor).append(' ')
                 .append(devicePath(identity.backend.controllerDeviceName))
                 .append(' ').append(action).append(' ')
                 .append(identity.pid).append(' ').append(identity.startTicks).append(' ')

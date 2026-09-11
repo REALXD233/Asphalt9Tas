@@ -360,7 +360,19 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="新录制逻辑频率（非屏幕 FPS）"
+                  android:text="录制速度（不改变物理步长，回放倍速独立）"
+                  android:textColor="@color/text_primary"
+                  android:textSize="15sp" />
+              <Spinner
+                  android:id="@+id/recordSlowmoSpinner"
+                  style="@style/A9Tas.Field"
+                  android:layout_width="match_parent"
+                  android:layout_height="52dp"
+                  android:popupBackground="@color/surface_elevated" />
+              <TextView
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="新录制逻辑频率（非屏幕 FPS）"
                 android:textColor="@color/text_primary"
                 android:textSize="15sp" />
             <Spinner

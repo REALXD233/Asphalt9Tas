@@ -39,8 +39,8 @@ if (-not (Test-Path -LiteralPath $payload -PathType Leaf)) {
 }
 $payloadHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $payload).Hash.ToLowerInvariant()
 $payloadSize = (Get-Item -LiteralPath $payload).Length
-if ($payloadHash -ne 'daf2b6d7e56e63df13be6123253589b07ef00caf7dc39f0bc2e28b6bbc7acd44' -or
-    $payloadSize -ne 4152064) {
+if ($payloadHash -ne '2294dafdcee3f97ca0805d8123ba59bea9be90d13cc46374662c60b057b30a55' -or
+    $payloadSize -ne 4152672) {
     throw 'native G4 controller payload identity drifted'
 }
 # Compile and verify the exact resolver against the same final payload before
@@ -51,6 +51,8 @@ if ($LASTEXITCODE -ne 0) {
     throw 'native G4 payload resolver/payload consistency gate failed'
 }
 New-Item -ItemType Directory -Force -Path $output | Out-Null
+& $compiler -std=c++17 -fsyntax-only (Join-Path $portRoot 'tests/diagnostic_tick_row_test.cpp')
+if ($LASTEXITCODE -ne 0) { throw 'Diagnostic tick-row regression failed' }
 
 & $compiler $g4 $command $remote $trap "-I$(Join-Path $portRoot 'src')" `
     -O2 -std=c++20 -static-libstdc++ -fPIE -pie `

@@ -1043,6 +1043,10 @@ G4DispatcherEntryV1(void* owner, std::int64_t* elapsed) {
       __atomic_load_n(reinterpret_cast<const std::uint32_t*>(
           g_control.lifecycle_state_address), __ATOMIC_RELAXED) == 3u;
   const std::uint32_t batch_mode = g_control.mode;
+  const std::uint32_t configured_slowmo = g_control.record_slowmo_divisor;
+  const std::uint32_t slowmo_divisor = RecordSlowmoDivisor(batch_mode, configured_slowmo);
+  const std::uint32_t budget_numerator = batch_mode == static_cast<std::uint32_t>(RunMode::kRecord)
+      ? RecordSlowmoNumerator(batch_mode, configured_slowmo) : factor;
   accelerated_generation = g_control.generation;
   std::uint32_t iterations = factor;
   const bool budget_owner = dispatcher_tracked && CurrentDispatcherDepth(tid) == 1u;
@@ -1054,7 +1058,8 @@ G4DispatcherEntryV1(void* owner, std::int64_t* elapsed) {
         const std::uint64_t now_ns = static_cast<std::uint64_t>(now.tv_sec) *
             1000000000ULL + static_cast<std::uint64_t>(now.tv_nsec);
         iterations = g_realtime_budget.Plan(now_ns, accelerated_generation,
-                                            g_control.fixed_delta_us * 1000ULL, factor);
+                                            g_control.fixed_delta_us * 1000ULL, budget_numerator,
+                                            slowmo_divisor);
       } else {
         g_realtime_budget.Reset();
         iterations = 1;
@@ -2333,6 +2338,7 @@ bool NonzeroSha256(const std::uint8_t hash[32]) {
 bool PassiveControlFresh() {
   if (std::memcmp(g_control.magic, kControlMagic, sizeof(kControlMagic)) != 0 ||
       g_control.version != kVersion || g_control.size != sizeof(Control) ||
+      !ValidRecordSlowmo(g_control.record_slowmo_divisor) ||
       g_control.enabled != 0 || g_control.frame_limit != 0 ||
       g_control.generation != 0 || g_control.completed != 0 ||
       g_control.mode != static_cast<std::uint32_t>(RunMode::kNeutral) ||
@@ -2398,6 +2404,7 @@ bool ArmControlValid(bool archived_rearm = false,
   if (std::memcmp(g_control.magic, kControlMagic, sizeof(kControlMagic)) != 0 ||
       g_control.version != kVersion || g_control.size != sizeof(Control) ||
       g_control.enabled != (active_replay_handoff ? 1u : 0u) ||
+      !ValidRecordSlowmo(g_control.record_slowmo_divisor) ||
       g_control.completed !=
           (active_replay_handoff ? 0u : archived_rearm ? 1u : 0u) ||
       (g_control.mode != static_cast<std::uint32_t>(RunMode::kNeutral) &&
