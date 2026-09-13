@@ -324,10 +324,12 @@ final class A9TasLibrary {
                               int expectedTicks, Metadata metadata) throws Exception {
         File draftRoot = new File(context.getFilesDir(), "drafts").getCanonicalFile();
         File draft = source.getCanonicalFile();
-        if (!draftRoot.equals(draft.getParentFile()) ||
-                !draft.getName().matches("attempt-[0-9]+-[0-9]+[.]a9g4r2") ||
-                !draft.isFile())
-            throw new IOException("checkpoint is outside the private draft directory");
+        if (!draftRoot.equals(draft.getParentFile()))
+            throw new IOException("checkpoint parent mismatch: expected=" + draftRoot + " actual=" + draft.getParentFile());
+        if (!draft.getName().matches("attempt-[0-9]+-[0-9]+[.]a9g4r2"))
+            throw new IOException("checkpoint filename mismatch: " + draft.getName());
+        if (!draft.isFile())
+            throw new IOException("checkpoint file missing or unreadable: " + draft.getName());
         if (expectedSourceSha == null || !expectedSourceSha.matches("[0-9a-f]{64}"))
             throw new IOException("checkpoint identity changed before promotion");
         A9TasArchive.SourceSummary summary = A9TasArchive.inspectSource(draft);

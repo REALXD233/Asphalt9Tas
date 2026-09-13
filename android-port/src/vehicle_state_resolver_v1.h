@@ -8,6 +8,7 @@
 #include <iterator>
 #include <string>
 #include <vector>
+#include <cerrno>
 
 #include <unistd.h>
 
@@ -177,14 +178,29 @@ struct Mapping {
     std::string path;
 };
 
+// This resolver reads an ARM64 game, including when hosted by NativeBridge.
+// Strip the TBI byte only at the remote-file boundary, never from stored
+// pointers: the payload must retain the game's original pointer identity.
+inline constexpr std::uintptr_t RemoteAddress(std::uintptr_t address) {
+    return address & UINT64_C(0x00ffffffffffffff);
+}
+
+inline thread_local std::uintptr_t last_failed_read_address = 0;
+inline thread_local int last_failed_read_errno = 0;
+
 inline bool ReadExact(int fd, std::uintptr_t address, void* output,
                       std::size_t size) {
     auto* cursor = static_cast<std::uint8_t*>(output);
     std::size_t done = 0;
     while (done < size) {
         const ssize_t n = pread(fd, cursor + done, size - done,
-                                static_cast<off_t>(address + done));
-        if (n <= 0) return false;
+                                static_cast<off_t>(RemoteAddress(address) + done));
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) {
+            last_failed_read_address = address + done;
+            last_failed_read_errno = n < 0 ? errno : 0;
+            return false;
+        }
         done += static_cast<std::size_t>(n);
     }
     return true;
@@ -248,7 +264,7 @@ inline bool ResolveBackendLayout(int mem, std::uintptr_t module_base,
         return fail(2);
     const auto signed_base =
         static_cast<std::intptr_t>(backend.interface) + adjustment;
-    if (signed_base <= 0) return fail(3);
+    if (RemoteAddress(static_cast<std::uintptr_t>(signed_base)) == 0) return fail(3);
     backend.base = static_cast<std::uintptr_t>(signed_base);
     constexpr std::uintptr_t kSlots[] = {
         0x40, 0x48, 0x58, 0x60, 0x68, 0x88, 0x90, 0x98, 0xA0,
@@ -280,7 +296,7 @@ inline bool ResolveBackendLayout(int mem, std::uintptr_t module_base,
     const auto signed_delegate =
         static_cast<std::intptr_t>(backend.delegate_interface) +
         delegate_adjustment;
-    if (signed_delegate <= 0) return fail(8);
+    if (RemoteAddress(static_cast<std::uintptr_t>(signed_delegate)) == 0) return fail(8);
     backend.delegate = static_cast<std::uintptr_t>(signed_delegate);
     if (!ReadExact(mem, backend.delegate, &backend.delegate_vtable,
                    sizeof(backend.delegate_vtable)))
@@ -304,7 +320,8 @@ inline bool ResolveBackendLayout(int mem, std::uintptr_t module_base,
         static_cast<std::intptr_t>(backend.delegate) + linear_adjustment;
     const auto signed_angular_source =
         static_cast<std::intptr_t>(backend.delegate) + angular_adjustment;
-    if (signed_linear_source <= 0 || signed_angular_source <= 0)
+    if (RemoteAddress(static_cast<std::uintptr_t>(signed_linear_source)) == 0 ||
+        RemoteAddress(static_cast<std::uintptr_t>(signed_angular_source)) == 0)
         return fail(12);
     backend.linear_source_base =
         static_cast<std::uintptr_t>(signed_linear_source);
@@ -535,6 +552,9 @@ inline bool BuildLayout(int mem, std::uintptr_t base,
 inline bool Resolve(pid_t pid, int mem, std::uintptr_t base,
                     const Profile& profile, Layout* output,
                     std::uint64_t* scanned_bytes = nullptr) {
+    last_failed_read_address = 0;
+    last_failed_read_errno = 0;
+    std::size_t matched = 0;
     std::vector<Mapping> maps;
     if (!ReadMaps(pid, &maps)) return false;
     constexpr std::size_t kChunkSize = 1u << 20;
@@ -554,17 +574,26 @@ inline bool Resolve(pid_t pid, int mem, std::uintptr_t base,
                 std::uintptr_t vtable = 0;
                 std::memcpy(&vtable, buffer.data() + offset, sizeof(vtable));
                 if (MatchVtable(vtable, base, profile) == 0) continue;
+                ++matched;
                 Layout layout{};
                 if (BuildLayout(mem, base, cursor + offset, vtable, profile,
                                 &layout))
                     valid.push_back(layout);
-                if (valid.size() > 1) return false;
+                if (valid.size() > 1) {
+                    std::fprintf(stderr, "G4_VEHICLE_DIAG ambiguous=1 matched=%zu valid=%zu\n", matched, valid.size());
+                    return false;
+                }
             }
             cursor += size;
         }
     }
     if (scanned_bytes) *scanned_bytes = scanned;
-    if (valid.size() != 1) return false;
+    if (valid.size() != 1) {
+        std::fprintf(stderr, "G4_VEHICLE_DIAG matched=%zu valid=%zu scanned=%llu last_read=0x%llx read_errno=%d\n",
+            matched, valid.size(), static_cast<unsigned long long>(scanned),
+            static_cast<unsigned long long>(last_failed_read_address), last_failed_read_errno);
+        return false;
+    }
     *output = valid.front();
     return true;
 }

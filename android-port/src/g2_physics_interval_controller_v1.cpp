@@ -152,7 +152,10 @@ bool WriteExact(int mem, std::uintptr_t address, const void* data,
 
 template <typename T>
 bool ReadAt(int mem, std::uintptr_t address, T* output) {
-    return output && pread(mem, output, sizeof(T), static_cast<off_t>(address)) ==
+    // ARM64 guest heap pointers may carry a TBI tag even on x86 hosts.
+    // Keep output bytes intact; only the /proc/PID/mem offset is untagged.
+    return output && pread(mem, output, sizeof(T),
+                           static_cast<off_t>(address & UINT64_C(0x00ffffffffffffff))) ==
                          static_cast<ssize_t>(sizeof(T));
 }
 
@@ -169,6 +172,9 @@ bool ReadStableAt(int mem, std::uintptr_t address, T* output) {
 
 bool DataAddressValid(const std::vector<Mapping>& maps,
                       std::uintptr_t address, std::size_t size) {
+    // /proc mappings use virtual addresses without the ARM64 TBI byte.
+    // Normalize the local copy only; runtime/callback pointers retain tags.
+    address &= UINT64_C(0x00ffffffffffffff);
     if (address == 0 || size == 0 || address > UINTPTR_MAX - size)
         return false;
     const std::uintptr_t end = address + size;
@@ -177,8 +183,11 @@ bool DataAddressValid(const std::vector<Mapping>& maps,
         const Mapping* mapping = FindMapping(maps, cursor, 1);
         if (!mapping || !mapping->readable || !mapping->writable ||
             mapping->executable || !mapping->private_mapping ||
-            mapping->end <= cursor)
+            mapping->end <= cursor) {
+            std::fprintf(stderr, "G4_OBJECT_DIAG data_mapping_invalid=0x%llx size=%zu\n",
+                         static_cast<unsigned long long>(address), size);
             return false;
+        }
         cursor = std::min(end, mapping->end);
     }
     return true;

@@ -79,7 +79,8 @@ final class A9TasBranchEditor {
                                               A9TasLibrary.Entry base,
                                               long baseTargetTick,
                                               File recording,
-                                              String recordingSha)
+                                              String recordingSha,
+                                              boolean checkpoint)
             throws Exception {
         if (base == null || recording == null || recordingSha == null ||
                 !recordingSha.equals(A9TasLibrary.sha256(recording)))
@@ -92,10 +93,15 @@ final class A9TasBranchEditor {
         verifyContinuousBoundary(recording, prefixFrames, summary.fixedDeltaUs);
         rejectExactSkippedSourceFrame(context, base, baseTargetTick,
                 recording, prefixFrames);
-        return A9TasLibrary.promoteDraft(context, recording, recordingSha,
-                Math.toIntExact(summary.frameCount),
-                metadata(base, " · 分支 T" + baseTargetTick,
-                        "branch", baseTargetTick));
+        A9TasLibrary.Metadata branchMetadata = metadata(base,
+                " · 分支 T" + baseTargetTick, "branch", baseTargetTick);
+        // Paused checkpoints live in drafts; a completed race is exported to
+        // recordings. Preserve that ownership distinction rather than trying
+        // to retire a completed recording through the draft-only API.
+        if (checkpoint)
+            return A9TasLibrary.promoteDraft(context, recording, recordingSha,
+                    Math.toIntExact(summary.frameCount), branchMetadata);
+        return A9TasLibrary.pack(context, recording, recordingSha, branchMetadata);
     }
 
     static A9TasLibrary.Entry trimCopy(Context context, A9TasLibrary.Entry source,

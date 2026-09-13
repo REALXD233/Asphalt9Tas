@@ -117,10 +117,10 @@ final class ArtifactDeployer {
                 // Root-discovered games may not be visible to PackageManager.
             }
             script.append("echo G10_STAGE target_private_payload;")
-                    .append("[ -r /proc/").append(selected.pid).append("/status ];")
+                    .append("[ -r /proc/").append(selected.pid).append("/status ] || { echo G10_ERROR selected_process_ended_rescan; exit 73; };")
                     .append("old_st=$(sed 's/^[^)]*) //' /proc/").append(selected.pid)
                     .append("/stat); set -- $old_st; old_s=${20}; [ \"$old_s\" = ")
-                    .append(selected.startTicks).append(" ];")
+                    .append(selected.startTicks).append(" ] || { echo G10_ERROR selected_process_identity_changed_rescan; exit 73; };")
                     .append("uid=; while read key first rest; do case \"$key\" in Uid:) uid=$first; break;; esac; done </proc/")
                     .append(selected.pid).append("/status; case \"$uid\" in ''|*[!0-9]*) exit 73;; esac;")
                     .append("echo G10_STAGE private_identity_bound;")

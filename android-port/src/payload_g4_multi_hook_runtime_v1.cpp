@@ -307,7 +307,8 @@ MappingMetadata QueryMapping(const void* address) {
   MappingMetadata metadata{};
   FILE* maps = std::fopen("/proc/self/maps", "re");
   if (maps == nullptr) return metadata;
-  const auto target = reinterpret_cast<std::uintptr_t>(address);
+  const auto target = reinterpret_cast<std::uintptr_t>(address) &
+                      UINT64_C(0x00ffffffffffffff);
   char line[2048]{};
   while (std::fgets(line, sizeof(line), maps)) {
     unsigned long long start = 0;
@@ -334,7 +335,8 @@ bool MappingCovers(const MappingMetadata& mapping, const void* address,
                    std::size_t size) {
   if (!mapping.query_ok || !mapping.found || address == nullptr || size == 0)
     return false;
-  const auto begin = reinterpret_cast<std::uintptr_t>(address);
+  const auto begin = reinterpret_cast<std::uintptr_t>(address) &
+                     UINT64_C(0x00ffffffffffffff);
   return begin <= UINTPTR_MAX - size && begin >= mapping.start &&
          begin + size <= mapping.end;
 }
@@ -1491,6 +1493,17 @@ G4FinalAfterV1(void* player) {
   const std::uint32_t tid = Tid();
   g_evidence.last_object[1] = reinterpret_cast<std::uintptr_t>(player);
   g_evidence.last_vptr[1] = vptr;
+  // Race teardown can precede the next Submit/FrameEvent callback. Finish
+  // lifecycle recording before inspecting the previous race's native body.
+  const auto* phase = reinterpret_cast<const std::uint32_t*>(
+      g_control.lifecycle_state_address);
+  const std::uint32_t lifecycle = __atomic_load_n(phase, __ATOMIC_RELAXED);
+  g_evidence.last_lifecycle_state = lifecycle;
+  (void)MaybeDiscardOpenLifecycleTick(lifecycle);
+  if (MaybeCompleteLifecycleRecording(lifecycle)) {
+    UnlockRuntime();
+    return;
+  }
   const bridge::Result result = bridge::ObserveFinalWriterReturn(
       AdapterConfig(), &g_runtime, reinterpret_cast<std::uintptr_t>(player),
       vptr, tid

@@ -39,8 +39,8 @@ if (-not (Test-Path -LiteralPath $payload -PathType Leaf)) {
 }
 $payloadHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $payload).Hash.ToLowerInvariant()
 $payloadSize = (Get-Item -LiteralPath $payload).Length
-if ($payloadHash -ne '2294dafdcee3f97ca0805d8123ba59bea9be90d13cc46374662c60b057b30a55' -or
-    $payloadSize -ne 4152672) {
+if ($payloadHash -ne 'c129ee69ee618942af9e0c218b1fa27a42ddd05511e4850d222c3cd968b682ad' -or
+    $payloadSize -ne 4152872) {
     throw 'native G4 controller payload identity drifted'
 }
 # Compile and verify the exact resolver against the same final payload before

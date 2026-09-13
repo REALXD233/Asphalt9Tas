@@ -1,6 +1,5 @@
 package dev.a9tas.android;
 
-import android.animation.ValueAnimator;
 import android.app.Service;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -15,7 +14,6 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
-import android.view.animation.DecelerateInterpolator;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -133,7 +131,12 @@ final class TasOverlayController {
         params.x = Math.max(0, preferences.getInt("overlay_x", dp(12)));
         params.y = Math.max(dp(32), preferences.getInt("overlay_y", dp(180)));
         showBubble();
-        windowManager.addView(root, params);
+        try {
+            windowManager.addView(root, params);
+        } catch (RuntimeException error) {
+            hide();
+            return false;
+        }
         preferences.edit().putBoolean("overlay_visible", true).apply();
         handler.removeCallbacks(refresh);
         handler.post(refresh);
@@ -141,6 +144,10 @@ final class TasOverlayController {
     }
 
     boolean isShowing() { return root != null; }
+
+    boolean isAttached() { return root != null && root.isAttachedToWindow(); }
+
+    void collapse() { showBubble(); }
 
     void hide() {
         handler.removeCallbacks(refresh);
@@ -204,6 +211,10 @@ final class TasOverlayController {
         root.removeAllViews();
         params.width = dp(58);
         params.height = dp(58);
+        params.x = Math.max(0, Math.min(preferences.getInt("overlay_x", params.x),
+                Math.max(0, service.getResources().getDisplayMetrics().widthPixels - dp(58))));
+        params.y = Math.max(0, Math.min(preferences.getInt("overlay_y", params.y),
+                Math.max(0, service.getResources().getDisplayMetrics().heightPixels - dp(58))));
         bubble = new TextView(service);
         bubble.setText("TAS");
         bubble.setTextColor(Color.WHITE);
@@ -239,8 +250,8 @@ final class TasOverlayController {
         LinearLayout panel = new LinearLayout(service);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(14), dp(16), dp(14));
-        panel.setBackground(roundRect(0xF2181C25, 20));
-        panel.setElevation(dp(14));
+        panel.setBackground(roundRect(0xF21B202A, 24));
+        panel.setElevation(dp(8));
 
         LinearLayout header = new LinearLayout(service);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -522,8 +533,8 @@ final class TasOverlayController {
         open.setOnClickListener(view -> openMainActivity());
         addButton(content, open, 8);
 
-        Button hide = button("关闭悬浮窗", 0xFF2B303B);
-        hide.setOnClickListener(view -> TasOverlayController.this.hide());
+        Button hide = button("收起为 TAS 标识", 0xFF2B303B);
+        hide.setOnClickListener(view -> showBubble());
         addButton(content, hide, 8);
 
         scroll.addView(content, new ScrollView.LayoutParams(
@@ -586,19 +597,21 @@ final class TasOverlayController {
             reloadOverlayLibraryAsync();
         }
 
-        if (failure && !expanded && updated != lastPresentedFailureUpdate) {
+        if ((failure || retryReady) && updated != lastPresentedFailureUpdate) {
             lastPresentedFailureUpdate = updated;
-            showPanel();
-            return;
+            android.widget.Toast.makeText(service,
+                    preferences.getString("detail", "请查看操作状态"),
+                    android.widget.Toast.LENGTH_LONG).show();
+            if (!expanded) { showPanel(); return; }
         }
 
         if (bubble != null) {
-            setTextIfChanged(bubble, failure ? "ERR" : recording || branchRecording ? "REC" :
-                    branchArmed ? "ARM" : replaying ? "PLAY" :
-                    waiting ? "WAIT" : preparing ? "PREP" : "TAS");
+            setTextIfChanged(bubble, "TAS\n" + (failure ? "错误" : recording || branchRecording ? "录制" :
+                    branchArmed ? "待续录" : replaying ? "回放" :
+                    waiting ? "待重开" : preparing ? "准备" : "待命"));
             bubble.setTextSize(failure || recording || branchRecording || branchArmed || replaying ||
                     waiting || preparing ?
-                    9f : 13f);
+                    11f : 11f);
             bubble.setBackground(roundRect(failure ? 0xE6D92D20 : recording || branchRecording ? 0xE6FF453A :
                     branchArmed ? 0xE6FF9F0A : replaying ? 0xE634C759 : waiting ? 0xE6FF9F0A :
                             preparing ? 0xE65E5CE6 : 0xE60A84FF, 29));
@@ -935,6 +948,8 @@ final class TasOverlayController {
         overlayTargetDraft = null;
         inspectPrefixButton.setEnabled(false);
         inspectPrefixButton.setText("已接收 · 正在加载…");
+        android.widget.Toast.makeText(service, "已接收：加载前 " + length + " Tick",
+                android.widget.Toast.LENGTH_SHORT).show();
         if (statusText != null) statusText.setText("正在加载检查位置");
         if (detailText != null)
             detailText.setText("将加载前 " + length + " Tick，并在实际闭合 Tick 暂停");
@@ -1191,7 +1206,9 @@ final class TasOverlayController {
         button.setAllCaps(false);
         button.setGravity(Gravity.CENTER);
         button.setPadding(dp(8), 0, dp(8), 0);
-        button.setBackground(roundRect(color, 13));
+        button.setBackground(new android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x33FFFFFF),
+                roundRect(color, 14), roundRect(Color.WHITE, 14)));
         return button;
     }
 
@@ -1259,7 +1276,8 @@ final class TasOverlayController {
                         if (tapExpands) showPanel();
                         return true;
                     }
-                    snapToEdge();
+                    preferences.edit().putInt("overlay_x", params.x)
+                            .putInt("overlay_y", params.y).apply();
                     return true;
                 default:
                     return false;
@@ -1267,28 +1285,4 @@ final class TasOverlayController {
         }
     }
 
-    private void snapToEdge() {
-        if (params == null || root == null) return;
-        int width = service.getResources().getDisplayMetrics().widthPixels;
-        int target = params.x + Math.max(root.getWidth(), dp(58)) / 2 < width / 2 ?
-                dp(8) : Math.max(dp(8), width - Math.max(root.getWidth(), dp(58)) - dp(8));
-        int start = params.x;
-        ValueAnimator animator = ValueAnimator.ofInt(start, target);
-        animator.setDuration(220L);
-        animator.setInterpolator(new DecelerateInterpolator());
-        animator.addUpdateListener(value -> {
-            if (params == null || root == null) return;
-            params.x = (Integer) value.getAnimatedValue();
-            try { windowManager.updateViewLayout(root, params); }
-            catch (IllegalArgumentException ignored) {}
-        });
-        animator.addListener(new android.animation.AnimatorListenerAdapter() {
-            @Override public void onAnimationEnd(android.animation.Animator animation) {
-                if (params == null) return;
-                preferences.edit().putInt("overlay_x", params.x)
-                        .putInt("overlay_y", params.y).apply();
-            }
-        });
-        animator.start();
-    }
 }

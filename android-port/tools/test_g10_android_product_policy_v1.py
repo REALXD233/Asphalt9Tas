@@ -606,7 +606,7 @@ def main() -> int:
     for token in ("android.permission.SYSTEM_ALERT_WINDOW", "overlayButton",
                   "ACTION_SHOW_OVERLAY", "ACTION_HIDE_OVERLAY",
                   "ACTION_OVERLAY_CHECKPOINT", "TYPE_APPLICATION_OVERLAY",
-                  "TYPE_PHONE", "FLAG_NOT_FOCUSABLE", "snapToEdge"):
+                  "TYPE_PHONE", "FLAG_NOT_FOCUSABLE", "overlay_x", "overlay_y"):
         require(token in joined + manifest,
                 f"missing game overlay control invariant: {token}")
     require("RootShell" not in overlay and "runController" not in overlay and
@@ -617,7 +617,7 @@ def main() -> int:
     for token in ("ScrollView", "连续刷圈 · 高频操作", "回放与分段续录",
                   "运行选项", "环境、恢复与高级操作",
                   '"RECORDING".equals(state)', 'preparing ? "准备中"',
-                  'failure ? "ERR"', 'failure ? "操作失败"',
+                  '"TAS\\n"', 'failure ? "操作失败"',
                   "registerOnSharedPreferenceChangeListener", "isFailureState",
                   "ACTION_QUICK_REPLAY", "ACTION_BRANCH_RECORD",
                   "ACTION_CHECKPOINT_BRANCH", "回放已保存片段并续录",
@@ -636,7 +636,8 @@ def main() -> int:
             sources["TasForegroundService.java"],
             "recording status is published before the first runtime progress receipt")
     require('armText.contains("G4_OBJECT_DIAG main_candidates=0")' in orchestrator and
-            "未检测到当前比赛对象" in orchestrator,
+            "主计时对象定位失败" in orchestrator and
+            '无需反复重进比赛：" + objectFailureDetails(armText)' in orchestrator,
             "missing actionable no-race-object failure translation")
     require("observationPollMillis()" in orchestrator and
             "observationPoll * 4L" in orchestrator and
@@ -690,9 +691,14 @@ def main() -> int:
     branch_editor = sources["A9TasBranchEditor.java"]
     continuous_adopt = java_block(branch_editor,
                                   "static A9TasLibrary.Entry adoptContinuous")
-    require("A9TasLibrary.promoteDraft" in continuous_adopt and
-            "A9TasLibrary.pack" not in continuous_adopt,
-            "continuous branch must atomically promote its private draft before packaging")
+    require("if (checkpoint)" in continuous_adopt and
+            "A9TasLibrary.promoteDraft" in continuous_adopt and
+            "return A9TasLibrary.pack" in continuous_adopt and
+            "suffix.sha256, suffix.checkpoint" in service_source,
+            "continuous branch must distinguish paused drafts from finished recordings")
+    require("int terminalLifecycle = Integer.parseInt" not in orchestrator and
+            '"lifecycle receipt has no immutable completion state"' in orchestrator,
+            "completed recordings must not parse a retired live lifecycle sample")
     for token in ("rejectExactSkippedSourceFrame",
                   "replay-to-record boundary skipped one authoritative physics tick",
                   "MessageDigest.isEqual(actual, skippedNext)"):

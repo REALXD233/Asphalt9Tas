@@ -1,6 +1,7 @@
 // Read-only runtime check for the exact resolver shared by scheduler replay.
 
 #include "vehicle_state_resolver_v1.h"
+#include "camera_build_profile_v1.h"
 
 #include <cerrno>
 #include <cinttypes>
@@ -11,8 +12,8 @@
 #include <unistd.h>
 
 int main(int argc, char** argv) {
-    if (argc != 3) {
-        std::fprintf(stderr, "usage: %s PID LIB_BASE_HEX\n", argv[0]);
+    if (argc != 3 && argc != 4) {
+        std::fprintf(stderr, "usage: %s PID LIB_BASE_HEX [CAMERA_BUILD_PROFILE]\n", argv[0]);
         return 2;
     }
     errno = 0;
@@ -27,6 +28,12 @@ int main(int argc, char** argv) {
         return 2;
     const pid_t pid = static_cast<pid_t>(pid_long);
     const auto base = static_cast<std::uintptr_t>(base_value);
+    auto profile = a9tas::vehicle_state_v1::ReferenceProfile();
+    if (argc == 4) {
+        a9tas::camera_build_profile_v1::Profile loaded{};
+        if (!a9tas::camera_build_profile_v1::Load(argv[3], &loaded)) return 2;
+        profile = loaded.vehicle;
+    }
     char mem_path[64]{};
     std::snprintf(mem_path, sizeof(mem_path), "/proc/%d/mem",
                   static_cast<int>(pid));
@@ -35,14 +42,14 @@ int main(int argc, char** argv) {
     a9tas::vehicle_state_v1::Layout layout{};
     std::uint64_t scanned = 0;
     const bool resolved =
-        a9tas::vehicle_state_v1::Resolve(pid, mem, base, &layout, &scanned);
+        a9tas::vehicle_state_v1::Resolve(pid, mem, base, profile, &layout, &scanned);
     a9tas::vehicle_state_v1::Snapshot snapshot{};
     const bool snapshot_ok =
         resolved && a9tas::vehicle_state_v1::ReadSnapshot(mem, layout, &snapshot);
     a9tas::vehicle_state_v1::BackendLayout backend{};
     const bool backend_ok =
         resolved && a9tas::vehicle_state_v1::ResolveBackendLayout(
-                        mem, base, layout, &backend);
+                        mem, base, layout, profile, &backend);
     float source_linear[3]{};
     float source_angular[3]{};
     float native_linear[3]{};

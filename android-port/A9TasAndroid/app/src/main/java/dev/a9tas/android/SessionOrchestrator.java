@@ -384,8 +384,8 @@ final class SessionOrchestrator {
                         ? "续录断点运行时已失效；请重新回放前缀到目标 Tick 后再续录：" +
                         tail(armText)
                         : armText.contains("G4_OBJECT_DIAG main_candidates=0")
-                        ? "未检测到当前比赛对象；请进入练习模式比赛，在比赛画面暂停后重试。" +
-                        "本次未开始录制，常驻会话仍保留"
+                        ? "主计时对象定位失败；本次未开始录制，常驻会话仍保留。" +
+                        "若已在比赛内，请导出诊断，无需反复重进比赛：" + objectFailureDetails(armText)
                         : armText.contains("G4_OBJECT_DIAG lifecycle=0") &&
                         armText.contains("countdown=0")
                         ? "未检测到倒计时 3 锚点；请在 Retry 新局显示 3 时暂停，然后重试"
@@ -508,10 +508,9 @@ final class SessionOrchestrator {
                 require(hasToken(status, token), "lifecycle receipt missing " + token);
             validateIntegrationReceipt(status, ticks, identity.recordDeltaUs);
 
-            Matcher lifecycleMatch = Pattern.compile(
-                    "(?:^|\\s)lifecycle=([0-9]+)(?:\\s|$)").matcher(status);
-            require(lifecycleMatch.find(), "lifecycle receipt has no terminal state");
-            int terminalLifecycle = Integer.parseInt(lifecycleMatch.group(1));
+            // The live lifecycle object may already have been retired by Retry.
+            // Only the immutable completion receipt below decides this save;
+            // never parse an unrelated, potentially stale live sample here.
             Matcher completionLifecycleMatch = Pattern.compile(
                     "(?:^|\\s)terminal_lifecycle=([0-9]+)(?:\\s|$)").matcher(status);
             require(completionLifecycleMatch.find(),
@@ -1135,7 +1134,10 @@ final class SessionOrchestrator {
             require(armed.ok() && armText.contains(
                             "G4_ACTION action=" + expectedAction + " ") &&
                             hasToken(armText, "status=1") && hasToken(armText, "ticks=0"),
-                    "replay arm receipt rejected: " + tail(armText));
+                    armText.contains("G4_OBJECT_DIAG lifecycle=0") && armText.contains("countdown=0")
+                        ? "回放未开始：未找到新局倒计时锚点。请 Retry，在倒计时 3 暂停，再点击加载到所选 Tick。" +
+                          "录像及所选 Tick 已保留，无需重新准备游戏。\n" + objectFailureDetails(armText)
+                        : "replay arm receipt rejected: " + objectFailureDetails(armText));
             armConfirmed = true;
             if (archivedRearm)
                 preferences.edit().putBoolean(

@@ -66,6 +66,23 @@ public final class TasForegroundService extends Service {
     private volatile boolean branchAfterCleanWaitingCancellation;
     private volatile boolean freshRecordAfterCleanOperation;
     private TasOverlayController overlayController;
+    private final android.os.Handler overlayGuardHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable overlayGuard = new Runnable() {
+        @Override public void run() {
+            if (destroyed) return;
+            boolean visible = overlayController != null && overlayController.isAttached() &&
+                    (Build.VERSION.SDK_INT < 23 || android.provider.Settings.canDrawOverlays(TasForegroundService.this));
+            if (!visible && !cancelRequested.get() &&
+                    !"RESTORING".equals(preferences().getString("state", "")) &&
+                    !"recovery".equals(preferences().getString("operation_kind", ""))) {
+                if (operationActive.get()) requestCancellation(false);
+                else if (preferences().getBoolean("session_hooks_installed", false))
+                    startRestore(false);
+            }
+            overlayGuardHandler.postDelayed(this, 500L);
+        }
+    };
 
     @Override public void onCreate() {
         super.onCreate();
@@ -78,6 +95,7 @@ public final class TasForegroundService extends Service {
                     .putBoolean("branch_auto_handoff", false)
                     .putBoolean("branch_manual_resume", true).apply();
         overlayController = new TasOverlayController(this);
+        overlayGuardHandler.postDelayed(overlayGuard, 500L);
         // A WindowManager view cannot survive this service process.  Never
         // expose a stale "visible" toggle after an update or process reclaim.
         getSharedPreferences("session", MODE_PRIVATE).edit()
@@ -133,7 +151,7 @@ public final class TasForegroundService extends Service {
         if (action != null && !action.isEmpty() && !operationActive.get())
             DiagnosticBundle.beginOperation(this, action);
         if (ACTION_HIDE_OVERLAY.equals(action)) {
-            overlayController.hide();
+            overlayController.collapse();
             return START_NOT_STICKY;
         }
         if (ACTION_CANCEL.equals(action)) {
@@ -154,7 +172,7 @@ public final class TasForegroundService extends Service {
         // TAS operation.  Never leave the user locked out of SIGCONT because a
         // research license expired while the exact breakpoint was retained.
         if (ACTION_RESUME_HARD_PAUSE.equals(action)) {
-            runExclusive("branch", this::resumeHardPausedBranch);
+            runExclusive("recovery", this::resumeHardPausedBranch);
             return START_NOT_STICKY;
         }
         try {
@@ -225,6 +243,16 @@ public final class TasForegroundService extends Service {
 
     private void runExclusive(String kind, ServiceOperation operation) {
         if (destroyed) return;
+        if (!"recovery".equals(kind)) {
+            try {
+                if (!overlayController.show() || !overlayController.isAttached())
+                    throw new IllegalStateException("请先授予悬浮窗权限；TAS 运行时必须显示标识");
+            } catch (Exception error) {
+                setState("OVERLAY_PERMISSION_REQUIRED", "请先授予悬浮窗权限；TAS 运行时必须显示标识");
+                android.widget.Toast.makeText(this, "请开启悬浮窗权限后再操作", android.widget.Toast.LENGTH_LONG).show();
+                return;
+            }
+        }
         if (!operationActive.compareAndSet(false, true)) {
             // A double tap is not a session failure and must not overwrite the
             // state/progress of the operation that is actually running.
@@ -989,10 +1017,12 @@ public final class TasForegroundService extends Service {
             base = A9TasLibrary.selected(this);
             long target = preferences.getLong("replay_target_tick", base.summary.targetTick);
             String binding = preferences.getString("replay_target_archive_sha", "");
-            if (!base.archiveSha256.equals(binding) || target < 0 ||
-                    target >= base.summary.frameCount)
+            if (!base.archiveSha256.equals(binding)) target = base.summary.targetTick;
+            if (target < 0 || target >= base.summary.frameCount)
                 throw new IllegalArgumentException(
-                        "Select a valid branch point in the base recording");
+                        "请设置有效的保留 Tick 数，范围为 1–" + base.summary.frameCount);
+            preferences.edit().putLong("replay_target_tick", target)
+                    .putString("replay_target_archive_sha", base.archiveSha256).commit();
             preferences.edit().putBoolean("replay_pause_at_target", true).commit();
 
             ensureReplaySessionInstalled();
@@ -1186,7 +1216,7 @@ public final class TasForegroundService extends Service {
             preferences.edit().putBoolean("branch_replay_ready", false)
                     .putBoolean("branch_runtime_prearmed", false).apply();
             A9TasLibrary.Entry branch = A9TasBranchEditor.adoptContinuous(
-                    this, base, target, suffix.file, suffix.sha256);
+                    this, base, target, suffix.file, suffix.sha256, suffix.checkpoint);
             long prefixTicks = target + 1L;
             long newlyRecordedTicks = suffix.ticks - prefixTicks;
             android.content.SharedPreferences.Editor branchSaved = preferences.edit()
@@ -1412,6 +1442,7 @@ public final class TasForegroundService extends Service {
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override public void onDestroy() {
+        overlayGuardHandler.removeCallbacks(overlayGuard);
         destroyed = true;
         cancelRequested.set(true);
         if (overlayController != null) overlayController.hide();

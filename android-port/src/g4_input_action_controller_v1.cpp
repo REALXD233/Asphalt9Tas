@@ -932,8 +932,8 @@ bool ValidateMainObject(int mem, const std::vector<Mapping>& maps,
       embedded_vtable !=
           base + g_build_profile.core.embedded_time_source_vtable_rva ||
        enabled > 1 || manager == 0 || scheduler == 0 ||
-      FindMapping(maps, scheduler, sizeof(std::uintptr_t)) == nullptr ||
-      FindMapping(maps, manager + kTimeScaleValueOffset,
+      FindMapping(maps, vehicle::RemoteAddress(scheduler), sizeof(std::uintptr_t)) == nullptr ||
+      FindMapping(maps, vehicle::RemoteAddress(manager) + kTimeScaleValueOffset,
                   sizeof(std::uint32_t)) == nullptr)
     return false;
 
@@ -952,6 +952,7 @@ bool ResolveMainObject(int mem, const std::vector<Mapping>& maps,
   const std::uintptr_t expected_vtable =
       base + g_build_profile.core.main_time_source_vtable_rva;
   std::vector<std::uintptr_t> candidates;
+  std::size_t vtable_matches = 0;
   std::vector<std::uint8_t> buffer(1u << 20);
   for (const Mapping& mapping : maps) {
     if (!mapping.readable || !mapping.writable || mapping.executable ||
@@ -973,6 +974,7 @@ bool ResolveMainObject(int mem, const std::vector<Mapping>& maps,
         std::uintptr_t value = 0;
         std::memcpy(&value, buffer.data() + offset, sizeof(value));
         if (value != expected_vtable) continue;
+        ++vtable_matches;
         const std::uintptr_t candidate = cursor + offset;
         if (ValidateMainObject(mem, maps, base, candidate))
           candidates.push_back(candidate);
@@ -984,8 +986,8 @@ bool ResolveMainObject(int mem, const std::vector<Mapping>& maps,
   candidates.erase(std::unique(candidates.begin(), candidates.end()),
                    candidates.end());
   if (candidates.size() != 1) {
-    std::fprintf(stderr, "G4_OBJECT_DIAG main_candidates=%zu\n",
-                 candidates.size());
+    std::fprintf(stderr, "G4_OBJECT_DIAG main_candidates=%zu main_vtable_matches=%zu\n",
+                 candidates.size(), vtable_matches);
     return false;
   }
   *output = candidates.front();
@@ -1109,7 +1111,12 @@ bool ResolveInstallObjects(pid_t pid, std::uintptr_t outer_owner,
                  nitro_dispatch);
   }
   close(mem);
-  if (!identities || !context || !nitro || player_vptr == 0) return false;
+  if (!identities || !context || !nitro || player_vptr == 0) {
+    std::fprintf(stderr, "G4_OBJECT_DIAG identities=%u context=%u nitro=%u player_vptr=0x%" PRIxPTR "\n",
+                 identities ? 1u : 0u, context ? 1u : 0u,
+                 nitro ? 1u : 0u, player_vptr);
+    return false;
+  }
 
   runtime->call.outer_owner = outer_owner;
   runtime->call.outer_owner_vptr = outer_vptr;

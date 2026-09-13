@@ -11,6 +11,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 
 final class GameProcessScanner {
     private static final String UNKNOWN_SHA =
@@ -130,7 +132,13 @@ final class GameProcessScanner {
             "l=$z; " +
             "printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \"$p\" \"$s\" \"$c\" \"$h\" \"$f\" \"$a\" \"$n\" \"$b\" \"$l\" \"$lc\"; " +
             "}; " +
-            "for d in /proc/[0-9]*; do scan_one \"$d\" fast; done; " +
+            // One process listing replaces two child processes per /proc PID.
+            // Names are hints only: scan_one rereads cmdline and proves maps.
+            // Unsupported/truncated ps output falls back to the full scan below.
+            "fast_pids=$(ps -A -o PID,NAME 2>/dev/null | while read -r p c; do " +
+            "case \"$p\" in ''|*[!0-9]*) continue;; esac; " +
+            "case \"$c\" in *kuang.kybc*|*[Aa]sphalt*|*[Gg]loft[Aa]9*) printf '%s\\n' \"$p\";; esac; done); " +
+            "for p in $fast_pids; do scan_one \"/proc/$p\" fast; done; " +
             "if [ \"$found_count\" -eq 0 ]; then " +
             "printf 'A9TAS_SCAN_V2\\tfallback\\tproc=%s\\tapps=%s\\n' \"$total_count\" \"$app_count\"; " +
             "total_count=0; app_count=0; " +
@@ -147,6 +155,8 @@ final class GameProcessScanner {
                 : "root scan failed (exit " + result.exitCode + ")" +
                         scanProgress(result.output));
         List<Candidate> candidates = new ArrayList<>();
+        List<String[]> rows = new ArrayList<>();
+        Map<String, LinkedHashSet<String>> pathsByMachine = new LinkedHashMap<>();
         for (String line : result.output) {
             String[] fields = line.split("\\t", -1);
             if (fields.length != 10 || !fields[0].matches("[0-9]+") ||
@@ -160,8 +170,21 @@ final class GameProcessScanner {
                             "libnb[.]so[+]libndk_translation[.]so|" +
                             "libhoudini[.]so[+]libnb[.]so[+]libndk_translation[.]so") ||
                     !fields[8].matches("[0-9a-fA-F]{64}")) continue;
-            Map<String, String> recovered = recoverHashes(context, runtimeRegistry,
-                    fields[5], fields[4], fields[9]);
+            rows.add(fields);
+            LinkedHashSet<String> paths = pathsByMachine.computeIfAbsent(
+                    fields[5], ignored -> new LinkedHashSet<>());
+            paths.add(fields[4]);
+            paths.add(fields[9]);
+        }
+        // One staging/root transaction per architecture, one hash per path.
+        // Deliberately local to this scan: never reuse hashes across updates.
+        Map<String, Map<String, String>> hashesByMachine = new HashMap<>();
+        for (Map.Entry<String, LinkedHashSet<String>> entry : pathsByMachine.entrySet()) {
+            hashesByMachine.put(entry.getKey(), recoverHashes(context, runtimeRegistry,
+                    entry.getKey(), entry.getValue().toArray(new String[0])));
+        }
+        for (String[] fields : rows) {
+            Map<String, String> recovered = hashesByMachine.get(fields[5]);
             int pid = Integer.parseInt(fields[0]);
             long startTicks = Long.parseLong(fields[1]);
             String process = fields[2];
